@@ -55,6 +55,10 @@ class DailyPage(QWidget):
         edit_btn.clicked.connect(self.edit_selected_report)
         delete_btn.clicked.connect(self.delete_selected_report)
         add_btn.clicked.connect(lambda: self.open_report_dialog())
+        delete_all_btn = make_button("一键删除全部")
+        delete_all_btn.setToolTip("删除全部 SOP 记录")
+        delete_all_btn.clicked.connect(self.delete_all_reports)
+        toolbar.insertWidget(toolbar.count() - 1, delete_all_btn)
         word_btn.clicked.connect(lambda: self.export_reports("docx"))
         markdown_btn.clicked.connect(lambda: self.export_reports("md"))
         self.search_edit.textChanged.connect(self.apply_filter)
@@ -215,6 +219,14 @@ class DailyPage(QWidget):
             self.report_service.delete_report(report_id)
             self.refresh_table()
             show_toast(self, "SOP问题已删除")
+
+    def delete_all_reports(self):
+        total = self.report_service.get_report_count()
+        if total and confirm_action(self, "确认删除全部SOP记录", f"确定删除全部 {total} 条SOP记录吗？此操作不可恢复。"):
+            removed = self.report_service.delete_all_reports()
+            self.pagination.page = 1
+            self.refresh_table()
+            show_toast(self, f"已删除全部SOP记录，共 {removed} 条")
 
     def export_reports(self, file_format: str):
         project_id = self.project_filter.currentData()

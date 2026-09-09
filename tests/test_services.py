@@ -287,6 +287,13 @@ def run():
     assert imported["project_id"] == project.id
     assert imported["project_name"] == project.name
     assert machine_service.get_machine_by_ip(project.id, "10.0.0.2") is not None
+    # Spreadsheet imports may contain only a management IP; import must retain
+    # the row instead of applying the stricter manual-entry network requirement.
+    imported_management_only, is_new, _ = machine_service.merge_machine_data(
+        project.id, "10.0.0.3", {"role": "仅管理网"}, require_network=False
+    )
+    assert is_new is True
+    assert imported_management_only.ip == "10.0.0.3"
     try:
         imported_machine = machine_service.get_machine_by_ip(project.id, "10.0.0.2")
         machine_service.update_machine(imported_machine.id, ip="10.0.0.1")

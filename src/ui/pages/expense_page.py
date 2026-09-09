@@ -56,6 +56,10 @@ class ExpensePage(QWidget):
         edit_btn.clicked.connect(self.edit_selected_expense)
         delete_btn.clicked.connect(self.delete_selected_expense)
         add_btn.clicked.connect(lambda: self.open_expense_dialog())
+        delete_all_btn = make_button("一键删除全部")
+        delete_all_btn.setToolTip("删除全部费用记录")
+        delete_all_btn.clicked.connect(self.delete_all_expenses)
+        toolbar.insertWidget(toolbar.count() - 1, delete_all_btn)
         export_btn.clicked.connect(self.export_expenses)
         self.search_edit.textChanged.connect(self.apply_filter)
         self.project_filter.currentIndexChanged.connect(self.refresh_table)
@@ -220,6 +224,14 @@ class ExpensePage(QWidget):
             self.expense_service.delete_expense(expense_id)
             self.refresh_table()
             show_toast(self, "费用已删除")
+
+    def delete_all_expenses(self):
+        total, _ = self.expense_service.get_expenses_page(1, 1)
+        if total and confirm_action(self, "确认删除全部费用", f"确定删除全部 {total} 条费用记录吗？此操作不可恢复。"):
+            removed = self.expense_service.delete_all_expenses()
+            self.pagination.page = 1
+            self.refresh_table()
+            show_toast(self, f"已删除全部费用，共 {removed} 条")
 
     def export_expenses(self):
         project_id = self.project_filter.currentData()

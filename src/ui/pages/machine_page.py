@@ -77,6 +77,10 @@ class MachinePage(QWidget):
         edit_btn.clicked.connect(self.edit_selected_machine)
         delete_btn.clicked.connect(self.delete_selected_machine)
         add_btn.clicked.connect(lambda: self.open_machine_dialog())
+        delete_all_btn = make_button("一键删除")
+        delete_all_btn.setToolTip("删除当前项目或搜索范围内的全部机器")
+        delete_all_btn.clicked.connect(self.delete_all_machines)
+        toolbar.insertWidget(toolbar.count() - 1, delete_all_btn)
         ssh_btn = make_button("SSH 自动采集")
         ssh_btn.clicked.connect(self.collect_by_ssh)
         toolbar.insertWidget(toolbar.count() - 1, ssh_btn)
@@ -255,6 +259,34 @@ class MachinePage(QWidget):
                 self.machine_service.delete_machine(machine_id)
             self.refresh_table()
             show_toast(self, f"已删除 {len(machine_ids)} 台机器")
+
+    def delete_all_machines(self):
+        project_id = self.project_filter.currentData()
+        total, _ = self.machine_service.get_machines_page(
+            1, 1, project_id, self.search_edit.text()
+        )
+        if not total:
+            show_toast(self, "当前范围没有可删除的机器")
+            return
+        scope = self.project_filter.currentText().strip() or "全部项目"
+        if not confirm_action(
+            self, "确认一键删除",
+            f"确定删除“{scope}”下当前搜索范围内的全部 {total} 台机器吗？\n此操作不可恢复。"
+        ):
+            return
+        try:
+            removed = self.machine_service.delete_all_machines(project_id, self.search_edit.text())
+        except Exception as exc:
+            show_toast(self, f"删除失败：{exc}", False)
+            return
+        self.pagination.page = 1
+        self.refresh_table()
+        pages = getattr(self.window(), "pages", [])
+        if pages and pages[0] is not None:
+            reload_home = getattr(pages[0], "reload_data", None)
+            if callable(reload_home):
+                reload_home()
+        show_toast(self, f"已一键删除 {removed} 台机器")
 
     def delete_machine(self, machine_id):
         machine = self.machine_service.get_machine_by_id(machine_id)

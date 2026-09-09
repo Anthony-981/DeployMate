@@ -31,23 +31,27 @@ class MachineService:
         finally:
             session.close()
 
-    def get_machines_page(self, page=1, page_size=20, project_id=None, search=""):
-        session = get_session()
-        try:
-            query = session.query(Machine)
-            if project_id:
-                query = query.filter(Machine.project_id == project_id)
-            keyword = (search or "").strip()
-            if keyword:
-                pattern = f"%{keyword}%"
-                query = query.join(Project, Project.id == Machine.project_id).filter(or_(
+    def _scoped_query(self, session, project_id=None, search=""):
+        query = session.query(Machine)
+        if project_id:
+            query = query.filter(Machine.project_id == int(project_id))
+        keyword = (search or "").strip()
+        if keyword:
+            pattern = f"%{keyword}%"
+            query = query.join(Project, Project.id == Machine.project_id).filter(or_(
                     Project.name.ilike(pattern), Project.project_code.ilike(pattern),
                     *[cast(getattr(Machine, field), String).ilike(pattern) for field in (
                         "role", "ip", "business_ip", "cluster_ip", "compute_ip", "storage_ip",
                         "username", "account", "password", "gpu_count", "gpu_model",
                         "gpu_interconnect", "hostname", "os", "cpu", "memory", "gpu", "cuda", "docker",
                     )]
-                ))
+            ))
+        return query
+
+    def get_machines_page(self, page=1, page_size=20, project_id=None, search=""):
+        session = get_session()
+        try:
+            query = self._scoped_query(session, project_id, search)
             query = query.order_by(Machine.project_id, Machine.id)
             return query.count(), query.offset((page - 1) * page_size).limit(page_size).all()
         finally:
@@ -200,7 +204,10 @@ class MachineService:
         finally:
             session.close()
     
-    def merge_machine_data(self, project_id: int, ip: str, new_data: dict) -> tuple[Machine, bool, dict]:
+    def merge_machine_data(
+        self, project_id: int, ip: str, new_data: dict,
+        require_network: bool = True,
+    ) -> tuple[Machine, bool, dict]:
         """
         合并机器数据
         返回: (机器对象, 是否新增, 冲突字段字典)
@@ -229,14 +236,16 @@ class MachineService:
                     elif not old_value and new_value:
                         # 补充空字段
                         setattr(existing, key, new_value)
-                self._validate_required_network(existing.business_ip, existing.cluster_ip)
+                if require_network:
+                    self._validate_required_network(existing.business_ip, existing.cluster_ip)
                 
                 session.commit()
                 session.refresh(existing)
                 return existing, False, conflicts
             else:
                 # 新增
-                self._validate_required_network(cleaned_data.get("business_ip"), cleaned_data.get("cluster_ip"))
+                if require_network:
+                    self._validate_required_network(cleaned_data.get("business_ip"), cleaned_data.get("cluster_ip"))
                 machine = Machine(project_id=project_id, ip=ip, **cleaned_data)
                 session.add(machine)
                 session.commit()
@@ -262,6 +271,22 @@ class MachineService:
         except Exception as e:
             session.rollback()
             raise e
+        finally:
+            session.close()
+
+    def delete_all_machines(self, project_id=None, search="") -> int:
+        """Delete all machines in the current project/search scope."""
+        session = get_session()
+        try:
+            ids = self._scoped_query(session, project_id, search).with_entities(Machine.id)
+            count = session.query(Machine).filter(Machine.id.in_(ids)).delete(
+                synchronize_session=False
+            )
+            session.commit()
+            return count
+        except Exception:
+            session.rollback()
+            raise
         finally:
             session.close()
     

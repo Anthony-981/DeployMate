@@ -1,6 +1,6 @@
 from typing import List, Optional
 from datetime import date
-from src.models import Project, Machine, DailyReport, Expense, get_session
+from src.models import Project, Machine, DailyReport, Expense, ImportFile, ImportRow, get_session
 from src.utils.validators import (
     PROJECT_FIELD_LIMITS,
     ValidationError,
@@ -135,12 +135,54 @@ class ProjectService:
             if not project:
                 return False
             
+            # 删除项目只清理机器；其他业务资料保留，解除项目关联。
+            session.query(Machine).filter(Machine.project_id == project_id).delete(
+                synchronize_session=False
+            )
+            session.query(DailyReport).filter(DailyReport.project_id == project_id).update(
+                {DailyReport.project_id: None}, synchronize_session=False
+            )
+            session.query(Expense).filter(Expense.project_id == project_id).update(
+                {Expense.project_id: None}, synchronize_session=False
+            )
+            session.query(ImportFile).filter(ImportFile.project_id == project_id).update(
+                {ImportFile.project_id: None}, synchronize_session=False
+            )
+            session.query(ImportRow).filter(ImportRow.project_id == project_id).update(
+                {ImportRow.project_id: None}, synchronize_session=False
+            )
             session.delete(project)
             session.commit()
             return True
         except Exception as e:
             session.rollback()
             raise e
+        finally:
+            session.close()
+
+    def delete_all_projects(self) -> int:
+        session = get_session()
+        try:
+            count = session.query(Project).count()
+            session.query(Machine).delete(synchronize_session=False)
+            session.query(DailyReport).update(
+                {DailyReport.project_id: None}, synchronize_session=False
+            )
+            session.query(Expense).update(
+                {Expense.project_id: None}, synchronize_session=False
+            )
+            session.query(ImportFile).update(
+                {ImportFile.project_id: None}, synchronize_session=False
+            )
+            session.query(ImportRow).update(
+                {ImportRow.project_id: None}, synchronize_session=False
+            )
+            session.query(Project).delete(synchronize_session=False)
+            session.commit()
+            return count
+        except Exception:
+            session.rollback()
+            raise
         finally:
             session.close()
     

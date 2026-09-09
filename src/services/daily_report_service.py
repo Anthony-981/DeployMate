@@ -156,6 +156,19 @@ class DailyReportService:
         finally:
             session.close()
 
+    def delete_all_reports(self) -> int:
+        session = get_session()
+        try:
+            count = session.query(DailyReport).count()
+            session.query(DailyReport).delete(synchronize_session=False)
+            session.commit()
+            return count
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
     def get_report_count(self) -> int:
         session = get_session()
         try:

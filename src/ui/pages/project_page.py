@@ -43,6 +43,10 @@ class ProjectPage(QWidget):
         edit_btn.clicked.connect(self.edit_selected_project)
         delete_btn.clicked.connect(self.delete_selected_project)
         add_btn.clicked.connect(lambda: self.open_project_dialog())
+        delete_all_btn = make_button("一键删除全部")
+        delete_all_btn.setToolTip("删除全部项目及其关联数据")
+        delete_all_btn.clicked.connect(self.delete_all_projects)
+        toolbar.insertWidget(toolbar.count() - 1, delete_all_btn)
         self.search_edit.textChanged.connect(self.apply_filter)
         panel_layout.addLayout(toolbar)
         layout.addWidget(panel)
@@ -184,7 +188,7 @@ class ProjectPage(QWidget):
             self.delete_project(project_ids[0])
             return
         if confirm_action(
-            self, "确认批量删除", f"确定删除选中的 {len(project_ids)} 个项目吗？\n关联数据也会一并删除。"
+            self, "确认批量删除", f"确定删除选中的 {len(project_ids)} 个项目吗？\n仅删除关联机器，其他资料保留。"
         ):
             for project_id in project_ids:
                 self.service.delete_project(project_id)
@@ -197,8 +201,19 @@ class ProjectPage(QWidget):
             self.refresh_table()
             return
         if confirm_action(
-            self, "确认删除", f"确定删除项目“{project.name}”吗？\n关联的机器、SOP记录、费用和导入记录也会删除。"
+            self, "确认删除", f"确定删除项目“{project.name}”吗？\n仅删除关联机器，SOP、费用和导入记录保留。"
         ):
             self.service.delete_project(project_id)
             self.refresh_table()
             show_toast(self, "项目已删除")
+
+    def delete_all_projects(self):
+        total = self.service.get_project_stats()["total"]
+        if not total:
+            show_toast(self, "当前没有项目可删除")
+            return
+        if confirm_action(self, "确认删除全部项目", f"确定删除全部 {total} 个项目吗？仅删除机器，其他资料保留。"):
+            removed = self.service.delete_all_projects()
+            self.pagination.page = 1
+            self.refresh_table()
+            show_toast(self, f"已删除全部项目，共 {removed} 个")

@@ -15,12 +15,13 @@ from PySide6.QtGui import QIcon
 from src.config import resolve_resource_path
 from src.ui.widgets.common import APP_STYLESHEET
 from src.services.backup_service import BackupService
+from src.config import APP_VERSION
 from datetime import datetime, timedelta
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("DeployMate - 运维实施工程师记录助手")
+        self.setWindowTitle(f"DeployMate {APP_VERSION} - 运维实施工程师记录助手")
         self.setMinimumSize(1100, 720)
         logo_path = resolve_resource_path("logo.png")
         if logo_path.exists():

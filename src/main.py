@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.ui.main_window import MainWindow
 from src.services.db_service import DatabaseService
+from src.config import APP_VERSION
 from src.ui.widgets.common import APP_STYLESHEET
 
 
@@ -53,7 +54,7 @@ def main():
     
     # 创建应用
     app = QApplication(sys.argv)
-    app.setApplicationName("DeployMate")
+    app.setApplicationName(f"DeployMate {APP_VERSION}")
     app.setQuitOnLastWindowClosed(True)
     
     # 设置全局样式

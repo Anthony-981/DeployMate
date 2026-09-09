@@ -128,6 +128,19 @@ class ExpenseService:
         finally:
             session.close()
 
+    def delete_all_expenses(self) -> int:
+        session = get_session()
+        try:
+            count = session.query(Expense).count()
+            session.query(Expense).delete(synchronize_session=False)
+            session.commit()
+            return count
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
     def get_total_amount(self, project_id: int | None):
         session = get_session()
         try:

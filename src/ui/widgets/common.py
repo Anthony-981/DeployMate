@@ -596,7 +596,8 @@ def make_management_toolbar(add_text: str = "添加"):
     layout.addStretch()
     refresh_button = make_button("刷新")
     edit_button = make_button("编辑")
-    delete_button = make_button("删除")
+    delete_button = make_button("批量删除")
+    delete_button.setToolTip("删除当前表格中选中的一条或多条记录")
     add_button = make_button(add_text, True)
     for button in (refresh_button, edit_button, delete_button, add_button):
         layout.addWidget(button)

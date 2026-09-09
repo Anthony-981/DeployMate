@@ -158,10 +158,10 @@ class ImportService:
         location_name = str(metadata.get("location") or "").strip()[:100]
         session = get_session()
         try:
-            existing = session.query(Project).filter(Project.customer == customer_name).first() if customer_name else None
-            if not existing:
-                # Keep compatibility with projects created by earlier DeployMate versions.
-                existing = session.query(Project).filter(Project.name == project_name).first()
+            # The worksheet/project name is the primary association key. Matching
+            # by customer first can incorrectly merge different projects owned by
+            # the same customer and then make their IPs collide.
+            existing = session.query(Project).filter(Project.name == project_name).first()
             if not existing and source_name != project_name:
                 existing = session.query(Project).filter(Project.name == source_name).first()
                 if existing:
@@ -170,6 +170,14 @@ class ImportService:
                     existing.sales = sales_name or existing.sales
                     existing.location = location_name or existing.location
                     session.commit()
+            if not existing and customer_name:
+                # Compatibility fallback for legacy projects whose name was
+                # imported differently; only use an unambiguous customer match.
+                customer_matches = session.query(Project).filter(
+                    Project.customer == customer_name
+                ).limit(2).all()
+                if len(customer_matches) == 1:
+                    existing = customer_matches[0]
             if existing:
                 if sales_name:
                     existing.customer = ""
@@ -349,9 +357,16 @@ class ImportService:
         for row_number, raw_row in enumerate(rows, start=2):
             row = {key: value for key, value in raw_row.items() if key in allowed_fields or key == "ip"}
             try:
-                ip = validate_ipv4(row.pop("ip", ""), "IP", required=True)
+                raw_ip = row.pop("ip", "")
+                # A spreadsheet row without any network IP is still valid source
+                # data. It is persisted in ImportRow below and must not be
+                # reported as a failed import merely because it cannot become a
+                # Machine row yet.
+                if not raw_ip:
+                    continue
+                ip = validate_ipv4(raw_ip, "IP", required=True)
                 machine, is_new, row_conflicts = machine_service.merge_machine_data(
-                    project_id, ip, row
+                    project_id, ip, row, require_network=False
                 )
                 if is_new:
                     summary["new"] += 1
