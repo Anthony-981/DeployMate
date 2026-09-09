@@ -22,12 +22,12 @@ jobs:
             archive: DeployMate-V0.2-windows-x64.zip
             expected_arch: AMD64
           - name: macOS Intel x64
-            os: macos-13
+            os: macos-15-intel
             artifact: DeployMate-V0.2-macos-intel-x64
             archive: DeployMate-V0.2-macos-intel-x64.zip
             expected_arch: x86_64
           - name: macOS Apple Silicon ARM64
-            os: macos-14-xlarge
+            os: macos-15
             artifact: DeployMate-V0.2-macos-arm64
             archive: DeployMate-V0.2-macos-arm64.zip
             expected_arch: arm64
