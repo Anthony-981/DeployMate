@@ -99,13 +99,16 @@ jobs:
           bash ./build-macos.sh
           codesign --deep --force --verbose --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" dist/DeployMate.app
           codesign --verify --deep --strict --verbose=2 dist/DeployMate.app
-          hdiutil create -volname DeployMate -srcfolder dist/DeployMate.app -ov -format UDZO "${{ matrix.asset }}"
           API_KEY_PATH="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8"
           echo "$APPLE_API_KEY_BASE64" | base64 --decode > "$API_KEY_PATH"
-          xcrun notarytool submit "${{ matrix.asset }}" --key "$API_KEY_PATH" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER" --wait
+          ditto -c -k --keepParent dist/DeployMate.app "$RUNNER_TEMP/DeployMate-app.zip"
+          xcrun notarytool submit "$RUNNER_TEMP/DeployMate-app.zip" --key "$API_KEY_PATH" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER" --wait
           xcrun stapler staple dist/DeployMate.app
-          xcrun stapler staple "${{ matrix.asset }}"
           xcrun stapler validate dist/DeployMate.app
+          hdiutil create -volname DeployMate -srcfolder dist/DeployMate.app -ov -format UDZO "${{ matrix.asset }}"
+          codesign --force --verbose --timestamp --sign "$APPLE_SIGNING_IDENTITY" "${{ matrix.asset }}"
+          xcrun notarytool submit "${{ matrix.asset }}" --key "$API_KEY_PATH" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER" --wait
+          xcrun stapler staple "${{ matrix.asset }}"
           xcrun stapler validate "${{ matrix.asset }}"
           spctl --assess --type open --context context:primary-signature --verbose dist/DeployMate.app
 
@@ -143,3 +146,15 @@ jobs:
             release-assets/*.dmg
           overwrite_files: true
           fail_on_unmatched_files: true
+
+      - name: Remove obsolete ZIP assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          for asset in \
+            DeployMate-V0.2-windows-x64.zip \
+            DeployMate-V0.2-macos-intel-x64.zip \
+            DeployMate-V0.2-macos-arm64.zip; do
+            gh release delete-asset "$GITHUB_REF_NAME" "$asset" --yes || true
+          done
