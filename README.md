@@ -41,8 +41,9 @@ python src/main.py
 PyInstaller 不支持跨平台编译，需要分别在 Windows 和 macOS 上构建。
 
 - Windows：运行 `build-exe.bat`，输出免安装单文件 `dist-portable/DeployMate.exe`。
-  构建脚本优先使用本地 PySide6 6.8.3 兼容环境，程序不需要 Python 或 Qt 安装；GitHub Actions 仍建议发布目录 ZIP，以便在不同安全策略的 Windows 环境中更稳定。
+  构建脚本优先使用本地 PySide6 6.8.3 兼容环境，程序不需要 Python 或 Qt 安装。GitHub Release 直接发布 `.exe`，不再生成 ZIP。
 - 最新开发环境测试：运行 `launch-deploymate.bat`，优先使用项目内的 `build-env-68` 环境。新安装和新开发库默认为空，不会自动创建示例数据。
-- macOS：安装 `requirements.txt` 和 `requirements-build.txt` 后运行 `bash build-macos.sh`，输出 `dist/DeployMate.app`。
+- macOS：安装 `requirements.txt` 和 `requirements-build.txt` 后运行 `bash build-macos.sh`，输出当前 CPU 架构对应的 `.dmg`。GitHub Actions 会分别生成 Intel x64 和 Apple Silicon ARM64 两个 DMG。
+- 未配置 Apple Developer 证书时，DMG 使用临时签名且不经过 Apple 公证；首次打开需要在 macOS“隐私与安全性”中确认。
 
 开发阶段不执行正式打包，功能完成后再生成并验证两个平台的发布文件。

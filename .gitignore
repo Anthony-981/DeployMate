@@ -8,6 +8,11 @@ venv/
 *.egg-info/
 dist/
 build/
+dist-portable/
+build-portable/
+DeployMate.exe
+logo.icns
+*.dmg
 data/*.db
 data/*.db-journal
 data/backups/*
