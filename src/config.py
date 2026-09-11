@@ -2,10 +2,23 @@ from __future__ import annotations
 
 import os
 import sys
+import hashlib
 from pathlib import Path
 
 APP_NAME = "DeployMate"
 APP_VERSION = "V1.0"
+
+
+def _release_build_id() -> str:
+    if not getattr(sys, "frozen", False):
+        return "dev"
+    try:
+        digest = hashlib.sha256()
+        with open(sys.executable, "rb") as stream:
+            digest.update(stream.read(1024 * 1024))
+        return digest.hexdigest()[:12]
+    except OSError:
+        return "unknown"
 
 
 def get_db_mode() -> str:
@@ -40,10 +53,10 @@ def resolve_data_dir() -> Path:
     if sys.platform == "win32":
         local_app_data = os.getenv("LOCALAPPDATA")
         base_dir = Path(local_app_data) if local_app_data else Path.home() / "AppData" / "Local"
-        return base_dir / APP_NAME / APP_VERSION
+        return base_dir / APP_NAME / f"{APP_VERSION}-{_release_build_id()}"
     if sys.platform == "darwin":
-        return Path.home() / "Library" / "Application Support" / APP_NAME / APP_VERSION
-    return Path.home() / ".local" / "share" / APP_NAME / APP_VERSION
+        return Path.home() / "Library" / "Application Support" / APP_NAME / f"{APP_VERSION}-{_release_build_id()}"
+    return Path.home() / ".local" / "share" / APP_NAME / f"{APP_VERSION}-{_release_build_id()}"
 
 
 def resolve_resource_path(file_name: str) -> Path:

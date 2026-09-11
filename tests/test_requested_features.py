@@ -1,4 +1,5 @@
 from datetime import date
+from pathlib import Path
 
 from docx import Document
 from openpyxl import Workbook, load_workbook
@@ -25,7 +26,8 @@ def test_packaged_v1_uses_versioned_empty_production_directory(tmp_path, monkeyp
     database_path = config.resolve_db_path()
 
     assert config.get_db_mode() == "prod"
-    assert database_path == str(tmp_path / "DeployMate" / "V1.0" / "deploymate.db")
+    assert Path(database_path).parent.parent == tmp_path / "DeployMate"
+    assert Path(database_path).parent.name.startswith("V1.0-")
     assert not (tmp_path / "DeployMate" / "deploymate.db").exists()
 
 

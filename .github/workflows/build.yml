@@ -106,7 +106,6 @@ jobs:
           fi
           hdiutil detach "$mount_point"
           rmdir "$mount_point"
-          hdiutil detach "/Volumes/DeployMate"
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
