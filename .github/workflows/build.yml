@@ -115,7 +115,19 @@ jobs:
           body: |
             DeployMate V1.0 production release.
 
-            See docs/RELEASE_NOTES_v1.0.md for the full update list.
+            更新内容：
+
+            - 新增管理员与普通用户账号体系、登录退出、用户启停和数据权限隔离。
+            - 修改密码增加完整校验，成功后必须使用新密码重新登录。
+            - 登录窗口补充 DeployMate Logo，首页移除“新建项目”快捷入口。
+            - 费用改为单条记录同时填写考核费用和出差费用，直接计算并展示利润。
+            - 修复费用计算预览显示不完整，并兼容旧版费用数据和汇总统计。
+            - 完善首页看板、分页搜索、导入修复、项目导出、备份恢复和数据库迁移。
+            - 增加账号权限、费用利润、分页、性能和回归测试。
+
+            完整说明见 `docs/RELEASE_NOTES_v1.0.md`。
+
+            发布文件：
 
             - Windows x64 single-file executable
             - macOS Intel x64 DMG (ad-hoc signed, not notarized)
