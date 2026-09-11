@@ -24,6 +24,7 @@ if errorlevel 1 (
 )
 
 echo [3/3] Building portable DeployMate.exe...
+echo Database mode: production (packaged application)
 if exist "dist-portable" rmdir /s /q "dist-portable"
 if exist "build-portable" rmdir /s /q "build-portable"
 "%PY%" -m PyInstaller --noconfirm --clean --distpath dist-portable --workpath build-portable deploymate.spec

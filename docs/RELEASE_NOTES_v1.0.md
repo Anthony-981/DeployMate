@@ -1,4 +1,4 @@
-# DeployMate v1.0 更新说明
+# DeployMate V1.0 更新说明
 
 ## 账号与权限
 

@@ -3,7 +3,7 @@ name: DeployMate V1.0 production builds
 on:
   workflow_dispatch:
   push:
-    tags: ['v*']
+    tags: ['V*']
 
 permissions:
   contents: write
@@ -31,6 +31,8 @@ jobs:
             asset: DeployMate-V1.0-macos-arm64.dmg
             expected_arch: arm64
     runs-on: ${{ matrix.os }}
+    env:
+      DEPLOYMATE_DB_MODE: prod
     steps:
       - name: Checkout
         uses: actions/checkout@v4

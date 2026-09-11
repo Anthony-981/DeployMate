@@ -19,6 +19,7 @@ done
 iconutil -c icns build/icon.iconset -o logo.icns
 
 echo "[3/5] Building DeployMate.app..."
+echo "Database mode: production (packaged application)"
 "$PYTHON_BIN" -m PyInstaller --noconfirm --clean deploymate.spec
 
 echo "[4/5] Applying an ad-hoc signature..."
