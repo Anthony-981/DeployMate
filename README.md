@@ -31,8 +31,9 @@ python src/main.py
 ## 数据存储
 
 - 源码开发运行使用 `data/deploymate_dev.db`。
-- Windows 免安装版使用 `%LOCALAPPDATA%/DeployMate/deploymate.db`。
-- macOS 应用使用 `~/Library/Application Support/DeployMate/deploymate.db`。
+- Windows V1.0 免安装版使用 `%LOCALAPPDATA%/DeployMate/V1.0/deploymate.db`。
+- macOS V1.0 应用使用 `~/Library/Application Support/DeployMate/V1.0/deploymate.db`。
+- V1.0 首次启动会在独立版本目录初始化空的生产数据库，不会读取开发库或旧版本数据库。
 - 所有新增和修改操作都会立即提交到本地 SQLite，关闭软件后数据不会丢失。
 - 可通过 `DEPLOYMATE_DATA_DIR` 指定自定义数据目录。
 

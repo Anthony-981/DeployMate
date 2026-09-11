@@ -14,6 +14,21 @@ from src.services.expense_service import ExpenseService
 from src.ui.widgets.common import PaginationBar
 
 
+def test_packaged_v1_uses_versioned_empty_production_directory(tmp_path, monkeypatch):
+    import src.config as config
+
+    monkeypatch.delenv("DEPLOYMATE_DATA_DIR", raising=False)
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setattr(config.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(config.sys, "platform", "win32")
+
+    database_path = config.resolve_db_path()
+
+    assert config.get_db_mode() == "prod"
+    assert database_path == str(tmp_path / "DeployMate" / "V1.0" / "deploymate.db")
+    assert not (tmp_path / "DeployMate" / "deploymate.db").exists()
+
+
 def test_requested_exports_keep_full_machine_data_and_zero_values(tmp_path):
     DatabaseService(str(tmp_path / "requested-export.db"))
     project = ProjectService().create_project(

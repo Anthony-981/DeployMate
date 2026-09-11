@@ -97,11 +97,15 @@ jobs:
           echo "Application architecture: $actual_arch"
           test "$actual_arch" = "$EXPECTED_ARCH"
           hdiutil verify "${{ matrix.asset }}"
-          if hdiutil attach "${{ matrix.asset }}" -readonly -nobrowse | grep -qE '\.db($|/)'; then
-            hdiutil detach "/Volumes/DeployMate" || true
+          mount_point="$(mktemp -d)"
+          hdiutil attach "${{ matrix.asset }}" -readonly -nobrowse -mountpoint "$mount_point"
+          if find "$mount_point" -type f \( -name '*.db' -o -name '*.db-wal' -o -name '*.db-shm' -o -name '*.db-journal' \) | grep -q .; then
+            hdiutil detach "$mount_point" || true
             echo "Database file found inside DMG"
             exit 1
           fi
+          hdiutil detach "$mount_point"
+          rmdir "$mount_point"
           hdiutil detach "/Volumes/DeployMate"
 
       - name: Upload build artifact

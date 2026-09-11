@@ -40,10 +40,10 @@ def resolve_data_dir() -> Path:
     if sys.platform == "win32":
         local_app_data = os.getenv("LOCALAPPDATA")
         base_dir = Path(local_app_data) if local_app_data else Path.home() / "AppData" / "Local"
-        return base_dir / APP_NAME
+        return base_dir / APP_NAME / APP_VERSION
     if sys.platform == "darwin":
-        return Path.home() / "Library" / "Application Support" / APP_NAME
-    return Path.home() / ".local" / "share" / APP_NAME
+        return Path.home() / "Library" / "Application Support" / APP_NAME / APP_VERSION
+    return Path.home() / ".local" / "share" / APP_NAME / APP_VERSION
 
 
 def resolve_resource_path(file_name: str) -> Path:

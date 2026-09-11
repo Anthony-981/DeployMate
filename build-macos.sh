@@ -3,6 +3,10 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
+export DEPLOYMATE_DB_MODE=prod
+BUILD_DATA_DIR="$(mktemp -d "${TMPDIR:-/tmp}/deploymate-build-empty.XXXXXX")"
+export DEPLOYMATE_DATA_DIR="$BUILD_DATA_DIR"
+trap 'rm -rf "$BUILD_DATA_DIR"' EXIT
 
 echo "[1/5] Checking build dependencies..."
 "$PYTHON_BIN" -m PyInstaller --version >/dev/null

@@ -13,8 +13,7 @@ build-portable/
 DeployMate.exe
 logo.icns
 *.dmg
-data/*.db
-data/*.db-journal
-data/backups/*
+data/
+build-env-*/
 .vscode/
 .idea/
