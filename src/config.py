@@ -9,11 +9,13 @@ APP_VERSION = "V1.0"
 
 
 def get_db_mode() -> str:
+    # Packaged releases must never inherit a development-mode environment value.
+    if getattr(sys, "frozen", False):
+        return "prod"
     configured = os.getenv("DEPLOYMATE_DB_MODE")
     if configured:
         return configured.strip().lower()
-    # Source checkout is for development; a packaged application uses production data.
-    return "prod" if getattr(sys, "frozen", False) else "dev"
+    return "dev"
 
 
 def resolve_db_path(db_path: str | None = None, db_mode: str | None = None) -> str:

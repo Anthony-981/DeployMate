@@ -56,6 +56,11 @@ jobs:
         run: |
           python -c "import os, platform, sys; actual=platform.machine(); expected=os.environ['EXPECTED_ARCH']; print(f'Runner architecture: {actual}'); sys.exit(0 if actual.lower() == expected.lower() else 1)"
 
+      - name: Verify clean production database
+        shell: bash
+        run: |
+          python -c "import os,tempfile; from pathlib import Path; root=Path(tempfile.mkdtemp()); os.environ['DEPLOYMATE_DATA_DIR']=str(root); os.environ['DEPLOYMATE_DB_MODE']='prod'; from src.services.db_service import DatabaseService; from src.models import User,Project,Machine,DailyReport,Expense,ImportFile,ImportRow,get_session; db=DatabaseService(); s=get_session(); models=(User,Project,Machine,DailyReport,Expense,ImportFile,ImportRow); counts={m.__tablename__:s.query(m).count() for m in models}; s.close(); assert Path(db.db_path).name=='deploymate.db', db.db_path; assert all(v==0 for v in counts.values()), counts; print(f'Clean production database verified: {counts}')"
+
       - name: Build Windows x64 executable
         if: runner.os == 'Windows'
         shell: pwsh
@@ -78,6 +83,7 @@ jobs:
         run: |
           if (-not (Test-Path "${{ matrix.asset }}" -PathType Leaf)) { throw "Missing EXE artifact" }
           if ((Get-Item "${{ matrix.asset }}").Length -le 0) { throw "EXE artifact is empty" }
+          if (Select-String -Path "${{ matrix.asset }}" -Pattern "deploymate_dev.db" -SimpleMatch -Quiet) { throw "Development database marker found in release executable" }
 
       - name: Verify macOS application and DMG
         if: runner.os == 'macOS'
@@ -91,6 +97,12 @@ jobs:
           echo "Application architecture: $actual_arch"
           test "$actual_arch" = "$EXPECTED_ARCH"
           hdiutil verify "${{ matrix.asset }}"
+          if hdiutil attach "${{ matrix.asset }}" -readonly -nobrowse | grep -qE '\.db($|/)'; then
+            hdiutil detach "/Volumes/DeployMate" || true
+            echo "Database file found inside DMG"
+            exit 1
+          fi
+          hdiutil detach "/Volumes/DeployMate"
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
