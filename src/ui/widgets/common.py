@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMenu,
     QPushButton,
     QScrollArea,
     QTextEdit,
@@ -92,7 +93,15 @@ class PaginationBar(QWidget):
 
     def set_total(self, total):
         self.total = max(0, int(total))
+        adjusted = self.page > self.page_count
         self.page = min(self.page, self.page_count)
+        self._update()
+        return adjusted
+
+    def reset(self):
+        """Return to the first page when the current data scope changes."""
+        if self.page != 1:
+            self.page = 1
         self._update()
 
     def set_page(self, page):
@@ -106,23 +115,35 @@ class PaginationBar(QWidget):
         self.set_page(self.page + offset)
 
     def _update(self):
-        self.summary.setText(f"共 {self.total} 条，第 {self.page}/{self.page_count} 页")
+        self.summary.setText(f"共 {self.total} 条 | 第 {self.page} / {self.page_count} 页 | 每页 {self.page_size} 条")
         self.previous.setEnabled(self.page > 1)
         self.next.setEnabled(self.page < self.page_count)
         while self.pages_layout.count():
             item = self.pages_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
-        for number in range(1, self.page_count + 1):
-            if self.page_count > 9 and number not in {1, self.page_count, self.page - 1, self.page, self.page + 1}:
-                continue
+        if self.page_count <= 7:
+            numbers = list(range(1, self.page_count + 1))
+        else:
+            numbers = [1, 2, self.page_count - 1, self.page_count]
+            numbers.extend([self.page - 1, self.page, self.page + 1])
+            numbers = sorted({number for number in numbers if 1 <= number <= self.page_count})
+        previous_number = None
+        for number in numbers:
+            if previous_number is not None and number - previous_number > 1:
+                ellipsis = QLabel("更多")
+                ellipsis.setAlignment(Qt.AlignCenter)
+                ellipsis.setFixedWidth(38)
+                ellipsis.setStyleSheet("color: #7b8ba4; font-weight: 800;")
+                self.pages_layout.addWidget(ellipsis)
             button = make_button(str(number))
-            button.setFixedWidth(34)
+            button.setFixedWidth(40)
             button.setEnabled(number != self.page)
             if number == self.page:
                 button.setStyleSheet("QPushButton { background: #3f7dff; color: white; border-radius: 7px; font-weight: 800; }")
             button.clicked.connect(lambda _checked=False, value=number: self.set_page(value))
             self.pages_layout.addWidget(button)
+            previous_number = number
 
 
 class _ComboClickFilter(QObject):
@@ -139,6 +160,99 @@ class _ComboClickFilter(QObject):
                 QTimer.singleShot(0, self.combo.showPopup)
                 return True
         return False
+
+
+def build_chinese_context_menu(widget):
+    """Build a Chinese context menu for an editor or table."""
+    menu = QMenu(widget)
+    if isinstance(widget, QTableWidget):
+        copy_action = menu.addAction("复制选中内容")
+        copy_action.setEnabled(bool(widget.selectedRanges()) or bool(widget.currentItem()))
+        def copy_table_selection():
+            if hasattr(widget, "copy_selection_to_clipboard"):
+                widget.copy_selection_to_clipboard()
+                return
+            ranges = widget.selectedRanges()
+            if not ranges and widget.currentItem():
+                QGuiApplication.clipboard().setText(widget.currentItem().text())
+                return
+            if not ranges:
+                return
+            selected = ranges[0]
+            lines = []
+            for row in range(selected.topRow(), selected.bottomRow() + 1):
+                lines.append("\t".join(
+                    widget.item(row, column).text() if widget.item(row, column) else ""
+                    for column in range(selected.leftColumn(), selected.rightColumn() + 1)
+                ))
+            QGuiApplication.clipboard().setText("\n".join(lines))
+
+        copy_action.triggered.connect(copy_table_selection)
+        select_action = menu.addAction("全选")
+        select_action.triggered.connect(widget.selectAll)
+        clear_action = menu.addAction("取消选择")
+        clear_action.triggered.connect(widget.clearSelection)
+        return menu
+
+    has_selection = bool(widget.selectedText()) if isinstance(widget, QLineEdit) else bool(widget.textCursor().hasSelection())
+    read_only = widget.isReadOnly()
+    undo_action = menu.addAction("撤销")
+    undo_action.setEnabled(widget.isUndoAvailable())
+    undo_action.triggered.connect(widget.undo)
+    redo_action = menu.addAction("重做")
+    redo_action.setEnabled(widget.isRedoAvailable())
+    redo_action.triggered.connect(widget.redo)
+    menu.addSeparator()
+    cut_action = menu.addAction("剪切")
+    cut_action.setEnabled(has_selection and not read_only)
+    cut_action.triggered.connect(widget.cut)
+    copy_action = menu.addAction("复制")
+    copy_action.setEnabled(has_selection)
+    copy_action.triggered.connect(widget.copy)
+    paste_action = menu.addAction("粘贴")
+    paste_action.setEnabled(not read_only)
+    paste_action.triggered.connect(widget.paste)
+    delete_action = menu.addAction("删除")
+    delete_action.setEnabled(has_selection and not read_only)
+
+    def delete_selection():
+        if isinstance(widget, QLineEdit):
+            start = widget.selectionStart()
+            end = start + len(widget.selectedText())
+            widget.setText(widget.text()[:start] + widget.text()[end:])
+            widget.setCursorPosition(start)
+        else:
+            cursor = widget.textCursor()
+            cursor.removeSelectedText()
+            widget.setTextCursor(cursor)
+
+    delete_action.triggered.connect(delete_selection)
+    select_action = menu.addAction("全选")
+    select_action.triggered.connect(widget.selectAll)
+    return menu
+
+
+class ChineseContextMenuFilter(QObject):
+    """Replace native edit menus so right-click actions stay in Chinese."""
+
+    def eventFilter(self, watched, event):
+        if event.type() != QEvent.ContextMenu:
+            return False
+        target = watched
+        if isinstance(watched, QWidget) and isinstance(watched.parentWidget(), QTableWidget):
+            target = watched.parentWidget()
+        if not isinstance(target, (QLineEdit, QTextEdit, QTableWidget)):
+            return False
+        if isinstance(target, QTableWidget):
+            local_pos = watched.mapTo(target.viewport(), event.pos()) if isinstance(watched, QWidget) else event.pos()
+            item = target.itemAt(local_pos)
+            if item and not item.isSelected():
+                target.clearSelection()
+                target.setCurrentItem(item)
+                item.setSelected(True)
+        menu = build_chinese_context_menu(target)
+        menu.exec(event.globalPos())
+        return True
 
 
 class PasswordCellWidget(QWidget):
@@ -774,18 +888,34 @@ class ManagedTableWidget(QTableWidget):
 
     def keyPressEvent(self, event):
         if event.matches(QKeySequence.Copy) or (event.key() == Qt.Key_C and event.modifiers() & Qt.ControlModifier):
-            ranges = self.selectedRanges()
-            if ranges:
-                selected = ranges[0]
-                lines = []
-                for row in range(selected.topRow(), selected.bottomRow() + 1):
-                    lines.append("\t".join(
-                        self.item(row, column).text() if self.item(row, column) else ""
-                        for column in range(selected.leftColumn(), selected.rightColumn() + 1)
-                    ))
-                QGuiApplication.clipboard().setText("\n".join(lines))
+            self.copy_selection_to_clipboard()
             return
         super().keyPressEvent(event)
+
+    def copy_selection_to_clipboard(self):
+        ranges = self.selectedRanges()
+        if not ranges and self.currentItem():
+            QGuiApplication.clipboard().setText(self.currentItem().text())
+            return
+        if not ranges:
+            return
+        selected = ranges[0]
+        lines = []
+        for row in range(selected.topRow(), selected.bottomRow() + 1):
+            lines.append("\t".join(
+                self.item(row, column).text() if self.item(row, column) else ""
+                for column in range(selected.leftColumn(), selected.rightColumn() + 1)
+            ))
+        QGuiApplication.clipboard().setText("\n".join(lines))
+
+    def contextMenuEvent(self, event):
+        item = self.itemAt(event.pos())
+        if item and not item.isSelected():
+            self.clearSelection()
+            self.setCurrentItem(item)
+            item.setSelected(True)
+        menu = build_chinese_context_menu(self)
+        menu.exec(event.globalPos())
 
     def set_pinned_actions(self, record_ids, on_edit, on_delete, source_column: int):
         self._action_source_column = source_column
@@ -1172,6 +1302,7 @@ def make_compact_form(fields, columns: int = 2, field_width: int = 340):
 
 def make_table(headers, rows):
     table = ManagedTableWidget()
+    table.setUpdatesEnabled(False)
     table.setColumnCount(len(headers))
     table.setRowCount(len(rows))
     table.setHorizontalHeaderLabels(headers)
@@ -1222,4 +1353,6 @@ def make_table(headers, rows):
     for row in range(table.rowCount()):
         table.setRowHeight(row, 42)
     table.setSortingEnabled(True)
+    table.setUpdatesEnabled(True)
+    table.viewport().update()
     return table

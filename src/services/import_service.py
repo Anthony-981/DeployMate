@@ -5,6 +5,7 @@ from csv import DictReader
 from src.utils.field_mapper import normalize_field_name
 from src.utils.field_mapper import normalize_machine_header
 from src.models import ImportFile, ImportRow, Project, get_session
+from src.services.access_service import owner_id_for, scope_query
 from src.services.machine_service import MachineService
 from src.services.project_service import ProjectService
 from src.utils.validators import MACHINE_FIELD_LIMITS, ValidationError, validate_ipv4
@@ -14,15 +15,17 @@ import re
 IP_RE = re.compile(r"(?<!\d)(?:25[0-5]|2[0-4]\d|1?\d?\d)(?:\.(?:25[0-5]|2[0-4]\d|1?\d?\d)){3}(?!\d)")
 
 class ImportService:
-    def __init__(self):
+    def __init__(self, current_user=None):
+        self.current_user = current_user
         self.last_sheet_scan = []
 
     def get_import_history(self, limit: int = 50, page: int = 1, page_size: int | None = None):
         session = get_session()
         try:
             query = (
-                session.query(ImportFile, Project.name, Project.project_code)
-                .join(Project, Project.id == ImportFile.project_id)
+                scope_query(session.query(ImportFile), ImportFile, self.current_user)
+                .outerjoin(Project, Project.id == ImportFile.project_id)
+                .with_entities(ImportFile, Project.name, Project.project_code)
                 .order_by(ImportFile.imported_at.desc())
             )
             total = query.count()
@@ -32,7 +35,7 @@ class ImportService:
             rows = query.all()
             result = [
                 {
-                    "project": display_project_name(project_name),
+                    "project": display_project_name(project_name or "未关联项目"),
                     "file_name": record.file_name,
                     "records": record.records_count,
                     "new": record.new_count,
@@ -60,9 +63,23 @@ class ImportService:
         """Read one or more machine tables, preserving XLSX worksheet names."""
         path = Path(file_path)
         if path.suffix.lower() == ".csv":
-            rows = self._read_csv(path)
+            raw_rows = self._read_csv_source_rows(path)
+            rows = [
+                self._build_machine_row(
+                    [normalize_machine_header(key) for key in raw_row.keys()],
+                    list(raw_row.values()),
+                    list(raw_row.keys()),
+                )
+                for raw_row in raw_rows
+            ]
+            rows = [row for row in rows if row]
             self.last_sheet_scan = [{"sheet_name": "CSV数据", "records": len(rows), "status": "已识别，待导入"}]
-            return [{"sheet_name": "CSV数据", "rows": rows}]
+            return [{
+                "sheet_name": "CSV数据",
+                "rows": rows,
+                "source_rows": raw_rows,
+                "preamble_rows": [],
+            }]
         if path.suffix.lower() != ".xlsx":
             raise ValidationError("仅支持 Excel (.xlsx) 和 CSV (.csv) 文件")
         workbook = load_workbook(path, data_only=True, read_only=True)
@@ -82,10 +99,11 @@ class ImportService:
                     workbook_metadata.setdefault(key, value)
                 try:
                     header_index, headers = self._find_header_row(rows)
+                    source_headers = list(rows[header_index])
                 except ValidationError as exc:
                     # Non-machine sheets are still retained losslessly.
                     source_rows = [
-                        {f"列{index + 1}": value for index, value in enumerate(raw) if value not in (None, "")}
+                        self._source_row([], raw)
                         for raw in rows
                         if any(value not in (None, "") for value in raw)
                     ]
@@ -93,6 +111,7 @@ class ImportService:
                         "sheet_name": worksheet.title,
                         "rows": [],
                         "source_rows": source_rows,
+                        "preamble_rows": [],
                         "project_metadata": {**workbook_metadata, **metadata},
                     })
                     self.last_sheet_scan.append({
@@ -106,20 +125,33 @@ class ImportService:
                     raw for raw in rows[header_index + 1:]
                     if any(value not in (None, "") for value in raw)
                 ]
+                source_records = [self._source_row(source_headers, raw) for raw in source_rows]
+                preamble_rows = [
+                    {"行号": index + 1, **self._source_row([], raw)}
+                    for index, raw in enumerate(rows[:header_index])
+                    if any(value not in (None, "") for value in raw)
+                ]
+                if any(value not in (None, "") for value in source_headers):
+                    preamble_rows.append({
+                        "行号": header_index + 1,
+                        "行类型": "原始表头",
+                        **self._source_row([], source_headers),
+                    })
                 for raw in source_rows:
-                    item = self._build_machine_row(headers, raw)
+                    item = self._build_machine_row(headers, raw, source_headers)
                     if item:
                         result.append(item)
                 if result or source_rows:
                     groups.append({
                         "sheet_name": worksheet.title,
                         "rows": result,
-                        "source_rows": source_rows,
+                        "source_rows": source_records,
+                        "preamble_rows": preamble_rows,
                         "project_metadata": {**workbook_metadata, **metadata},
                     })
                     self.last_sheet_scan.append({
                         "sheet_name": worksheet.title,
-                        "records": len(source_rows),
+                        "records": len(source_records),
                         "status": f"已读取 {len(source_rows)} 行，机器记录 {len(result)} 条，待导入",
                     })
                 else:
@@ -139,7 +171,9 @@ class ImportService:
     def get_project_label(self, project_id: int) -> str:
         session = get_session()
         try:
-            project = session.query(Project).filter(Project.id == project_id).first()
+            project = scope_query(session.query(Project), Project, self.current_user).filter(
+                Project.id == project_id
+            ).first()
             return display_project_name(project.name) if project else "未知项目"
         finally:
             session.close()
@@ -156,24 +190,27 @@ class ImportService:
         metadata = metadata or {}
         sales_name = (metadata.get("sales") or sales_name).strip()[:100]
         location_name = str(metadata.get("location") or "").strip()[:100]
+        remarks_text = str(metadata.get("remarks") or "").strip()[:4000]
         session = get_session()
         try:
             # The worksheet/project name is the primary association key. Matching
             # by customer first can incorrectly merge different projects owned by
             # the same customer and then make their IPs collide.
-            existing = session.query(Project).filter(Project.name == project_name).first()
+            project_query = scope_query(session.query(Project), Project, self.current_user)
+            existing = project_query.filter(Project.name == project_name).first()
             if not existing and source_name != project_name:
-                existing = session.query(Project).filter(Project.name == source_name).first()
+                existing = project_query.filter(Project.name == source_name).first()
                 if existing:
                     existing.name = project_name
                     existing.customer = customer_name
                     existing.sales = sales_name or existing.sales
                     existing.location = location_name or existing.location
+                    existing.remarks = remarks_text or existing.remarks
                     session.commit()
             if not existing and customer_name:
                 # Compatibility fallback for legacy projects whose name was
                 # imported differently; only use an unambiguous customer match.
-                customer_matches = session.query(Project).filter(
+                customer_matches = project_query.filter(
                     Project.customer == customer_name
                 ).limit(2).all()
                 if len(customer_matches) == 1:
@@ -185,18 +222,21 @@ class ImportService:
                     existing.sales = sales_name
                 if location_name and not existing.location:
                     existing.location = location_name
-                if sales_name or location_name:
+                if remarks_text and not existing.remarks:
+                    existing.remarks = remarks_text
+                if sales_name or location_name or remarks_text:
                     session.commit()
                 return existing.id
         finally:
             session.close()
-        project = ProjectService().create_project(
+        project = ProjectService(self.current_user).create_project(
                 name=project_name,
                 customer=customer_name,
                 sales=sales_name or None,
                     location=location_name or None,
                     project_code=None,
                     status="待开始",
+                    remarks=remarks_text or None,
                 )
         return project.id
 
@@ -206,6 +246,7 @@ class ImportService:
         aliases = {
             "sales": {"销售", "销售人员", "销售姓名", "sales"},
             "location": {"地点", "实施地点", "项目地点", "所在地", "location"},
+            "remarks": {"备注", "说明", "remark", "remarks"},
         }
         label_values = set().union(*aliases.values()) | {"实施时间", "日期", "时间"}
         metadata = {}
@@ -253,7 +294,7 @@ class ImportService:
             for raw in rows[header_index + 1:]:
                 if self._header_score(raw) >= 2:
                     continue
-                item = self._build_machine_row(headers, raw)
+                item = self._build_machine_row(headers, raw, rows[header_index])
                 if item:
                     result.append(item)
             return result
@@ -261,17 +302,22 @@ class ImportService:
             wb.close()
 
     def _read_csv(self, path: Path):
+        result = []
+        for row in self._read_csv_source_rows(path):
+            source_headers = list(row.keys())
+            item = self._build_machine_row(
+                [normalize_machine_header(key) for key in source_headers],
+                list(row.values()),
+                source_headers,
+            )
+            if item:
+                result.append(item)
+        return result
+
+    @staticmethod
+    def _read_csv_source_rows(path: Path):
         with path.open("r", encoding="utf-8-sig", newline="") as f:
-            reader = DictReader(f)
-            result = []
-            for row in reader:
-                item = self._build_machine_row(
-                    [normalize_machine_header(key) for key in row.keys()],
-                    list(row.values()),
-                )
-                if item:
-                    result.append(item)
-            return result
+            return [dict(row) for row in DictReader(f)]
 
     def _find_header_row(self, rows):
         network_fields = {"ip", "business_ip", "cluster_ip", "compute_ip", "storage_ip"}
@@ -296,15 +342,16 @@ class ImportService:
         return known
 
     @staticmethod
-    def _build_machine_row(headers, raw):
+    def _build_machine_row(headers, raw, source_headers=None):
         item = {}
-        unknown_values = []
+        extra_info = {}
         for index, value in enumerate(raw):
             if index >= len(headers) or value in (None, ""):
                 continue
             fields = headers[index]
             if not fields:
-                unknown_values.append(f"列{index + 1}={value}")
+                label = str((source_headers or [])[index] or f"列{index + 1}") if index < len(source_headers or []) else f"列{index + 1}"
+                extra_info[label] = value
                 continue
             text_value = str(value).strip()
             ips = IP_RE.findall(text_value)
@@ -318,10 +365,8 @@ class ImportService:
                     continue
                 else:
                     item[field] = value
-        if unknown_values:
-            existing = str(item.get("remarks") or "").strip()
-            extra = "；".join(unknown_values)
-            item["remarks"] = f"{existing}；{extra}".strip("；")
+        if extra_info:
+            item["extra_info"] = json.dumps(extra_info, ensure_ascii=False, default=str)
         # Many implementation sheets do not have a management IP column.
         if not item.get("ip"):
             item["ip"] = next(
@@ -331,6 +376,19 @@ class ImportService:
         if not item["ip"]:
             return {}
         return item
+
+    @staticmethod
+    def _source_row(headers, raw):
+        result = {}
+        for index, value in enumerate(raw):
+            if value in (None, ""):
+                continue
+            label = headers[index] if index < len(headers) and headers[index] not in (None, "") else f"列{index + 1}"
+            label = str(label)
+            if label in result:
+                label = f"{label}（列{index + 1}）"
+            result[label] = value
+        return result
 
     def import_machines(self, project_id: int, rows: list[dict], file_name: str,
                         file_type: str = "", file_size: int = 0,
@@ -342,15 +400,17 @@ class ImportService:
 
         session = get_session()
         try:
-            project = session.query(Project).filter(Project.id == project_id).first()
+            project = scope_query(session.query(Project), Project, self.current_user).filter(
+                Project.id == project_id
+            ).first()
             if not project:
                 raise ValidationError("目标项目不存在，请刷新项目列表后重新选择")
             project_name = project.name
         finally:
             session.close()
 
-        machine_service = MachineService()
-        allowed_fields = set(MACHINE_FIELD_LIMITS) | {"account"}
+        machine_service = MachineService(self.current_user)
+        allowed_fields = set(MACHINE_FIELD_LIMITS) | {"account", "extra_info"}
         summary = {"records": len(rows), "new": 0, "merge": 0, "conflict": 0, "errors": []}
         conflicts = []
 
@@ -388,6 +448,7 @@ class ImportService:
         session = get_session()
         try:
             record = ImportFile(
+                owner_id=project.owner_id or owner_id_for(self.current_user),
                 project_id=project_id,
                 file_name=file_name,
                 file_type=file_type,
@@ -401,13 +462,19 @@ class ImportService:
             session.add(record)
             session.flush()
             for row_number, raw_row in enumerate(source_rows or rows, start=2):
+                machine_row = self._build_machine_row(
+                    [normalize_machine_header(key) for key in raw_row.keys()],
+                    list(raw_row.values()),
+                    list(raw_row.keys()),
+                ) if isinstance(raw_row, dict) else None
                 session.add(ImportRow(
+                    owner_id=project.owner_id or owner_id_for(self.current_user),
                     project_id=project_id,
                     file_name=file_name,
                     sheet_name=sheet_name,
                     row_number=row_number,
                     row_json=json.dumps(raw_row, ensure_ascii=False, default=str),
-                    import_status="机器已写入" if raw_row in rows else "原始数据已保存",
+                    import_status="机器已写入" if machine_row and machine_row.get("ip") else "原始数据已保存",
                 ))
             session.commit()
         except Exception:

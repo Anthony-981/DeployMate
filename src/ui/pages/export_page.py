@@ -9,12 +9,19 @@ from src.ui.widgets.common import make_button, make_compact_form, make_page, mak
 
 
 class ExportPage(QWidget):
-    FORMAT_OPTIONS = {"Excel 工作簿": "xlsx", "Word 文档": "docx", "ZIP 项目资料包": "zip", "SQLite 数据库": "db"}
+    FORMAT_OPTIONS = {
+        "Excel 工作簿": "xlsx",
+        "Word 文档": "docx",
+        "Markdown 文档": "md",
+        "ZIP 项目资料包": "zip",
+        "SQLite 数据库": "db",
+    }
 
-    def __init__(self):
+    def __init__(self, current_user=None):
         super().__init__()
-        self.project_service = ProjectService()
-        self.export_service = ExportService()
+        self.current_user = current_user
+        self.project_service = ProjectService(current_user)
+        self.export_service = ExportService(current_user)
         self.build_ui()
 
     def build_ui(self):
@@ -63,7 +70,7 @@ class ExportPage(QWidget):
                 ["项目基本信息", "名称、客户、编号、地点、销售、状态", "自动包含"],
                 ["机器信息", "网络、账号、硬件、GPU、系统信息", "默认包含密码，可取消"],
                 ["SOP问题记录", "SOP主题、遇到的问题、解决方法、后续建议", "自动包含"],
-                ["出差费用", "日期、类型、金额、报销状态", "自动包含"],
+                ["出差费用", "费用日期、出差人员、出差起止日期、分类、金额、报销状态", "自动包含"],
             ],
         ))
         layout.addWidget(content_panel)
@@ -82,8 +89,8 @@ class ExportPage(QWidget):
         selected = self.project_box.currentData()
         self.project_box.clear()
         self.project_box.addItem("全部项目", None)
-        for project in self.project_service.get_all_projects():
-            self.project_box.addItem(display_project_name(project.name), project.id)
+        for project_id, project_name in self.project_service.get_project_options():
+            self.project_box.addItem(display_project_name(project_name), project_id)
         index = self.project_box.findData(selected)
         if index >= 0:
             self.project_box.setCurrentIndex(index)
@@ -101,7 +108,10 @@ class ExportPage(QWidget):
             return
         suffix = f".{file_format}"
         project_name = self.project_box.currentText().split(" / ", 1)[0]
-        filters = {"xlsx": "Excel (*.xlsx)", "docx": "Word (*.docx)", "zip": "ZIP (*.zip)", "db": "SQLite (*.db)"}
+        filters = {
+            "xlsx": "Excel (*.xlsx)", "docx": "Word (*.docx)", "md": "Markdown (*.md)",
+            "zip": "ZIP (*.zip)", "db": "SQLite (*.db)",
+        }
         file_path, _ = QFileDialog.getSaveFileName(
             self, "导出项目资料", str(Path(self.export_dir or ".") / f"{project_name}_项目资料{suffix}"), filters[file_format]
         )

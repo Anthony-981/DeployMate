@@ -7,6 +7,7 @@ class Machine(Base):
     __tablename__ = 'machines'
     
     id = Column(Integer, primary_key=True, autoincrement=True)
+    owner_id = Column(Integer, ForeignKey("users.id", ondelete="RESTRICT"), nullable=True, index=True)
     project_id = Column(Integer, ForeignKey('projects.id', ondelete='CASCADE'))
     ip = Column(String(50), nullable=False, index=True)
     role = Column(String(100))
@@ -28,11 +29,13 @@ class Machine(Base):
     account = Column(String(100))
     password = Column(String(200))
     remarks = Column(Text)
+    extra_info = Column(Text)
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
     
     # 关系
     project = relationship("Project", back_populates="machines")
+    owner = relationship("User", foreign_keys=[owner_id])
     
     # 同一项目内 IP 唯一
     __table_args__ = (

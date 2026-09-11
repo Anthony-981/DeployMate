@@ -7,6 +7,7 @@ class ImportFile(Base):
     __tablename__ = 'import_files'
     
     id = Column(Integer, primary_key=True, autoincrement=True)
+    owner_id = Column(Integer, ForeignKey("users.id", ondelete="RESTRICT"), nullable=True, index=True)
     project_id = Column(Integer, ForeignKey('projects.id', ondelete='CASCADE'))
     file_name = Column(String(500), nullable=False)
     file_type = Column(String(50))
@@ -20,6 +21,7 @@ class ImportFile(Base):
     
     # 关系
     project = relationship("Project", back_populates="import_files")
+    owner = relationship("User", foreign_keys=[owner_id])
     
     def __repr__(self):
         return f"<ImportFile(id={self.id}, name='{self.file_name}', status='{self.status}')>"

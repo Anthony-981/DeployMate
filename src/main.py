@@ -1,7 +1,7 @@
 import sys
 from pathlib import Path
 from PySide6.QtGui import QColor, QPalette
-from PySide6.QtWidgets import QApplication, QToolTip
+from PySide6.QtWidgets import QApplication, QDialog, QToolTip
 from PySide6.QtCore import Qt, QTimer
 
 # 添加项目根目录到路径
@@ -9,8 +9,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.ui.main_window import MainWindow
 from src.services.db_service import DatabaseService
+from src.ui.dialogs.login_dialog import LoginDialog
 from src.config import APP_VERSION
-from src.ui.widgets.common import APP_STYLESHEET
+from src.ui.widgets.common import APP_STYLESHEET, ChineseContextMenuFilter
 
 
 def apply_light_palette(app: QApplication):
@@ -55,7 +56,7 @@ def main():
     # 创建应用
     app = QApplication(sys.argv)
     app.setApplicationName(f"DeployMate {APP_VERSION}")
-    app.setQuitOnLastWindowClosed(True)
+    app.setQuitOnLastWindowClosed(False)
     
     # 设置全局样式
     app.setStyle("Fusion")
@@ -71,15 +72,23 @@ def main():
         tooltip_palette.setColor(group, QPalette.WindowText, QColor("#24344f"))
     QToolTip.setPalette(tooltip_palette)
     
-    # 创建主窗口
-    window = MainWindow()
-    window.showMaximized()
-    window.raise_()
-    window.activateWindow()
-    QTimer.singleShot(300, window.raise_)
-    QTimer.singleShot(300, window.activateWindow)
-    
-    sys.exit(app.exec())
+    context_menu_filter = ChineseContextMenuFilter(app)
+    app.installEventFilter(context_menu_filter)
+
+    # 本地应用启动时登录；退出登录后回到登录窗口，而不是直接结束程序。
+    while True:
+        login = LoginDialog()
+        if login.exec() != QDialog.Accepted:
+            return
+        window = MainWindow(current_user=login.user)
+        window.showMaximized()
+        window.raise_()
+        window.activateWindow()
+        QTimer.singleShot(300, window.raise_)
+        QTimer.singleShot(300, window.activateWindow)
+        app.exec()
+        if not getattr(window, "_logging_out", False):
+            return
 
 if __name__ == "__main__":
     main()

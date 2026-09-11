@@ -26,10 +26,11 @@ from src.utils.validators import DAILY_FIELD_LIMITS
 
 
 class DailyPage(QWidget):
-    def __init__(self):
+    def __init__(self, current_user=None):
         super().__init__()
-        self.project_service = ProjectService()
-        self.report_service = DailyReportService()
+        self.current_user = current_user
+        self.project_service = ProjectService(current_user)
+        self.report_service = DailyReportService(current_user)
         self.build_ui()
 
     def build_ui(self):
@@ -61,8 +62,8 @@ class DailyPage(QWidget):
         toolbar.insertWidget(toolbar.count() - 1, delete_all_btn)
         word_btn.clicked.connect(lambda: self.export_reports("docx"))
         markdown_btn.clicked.connect(lambda: self.export_reports("md"))
-        self.search_edit.textChanged.connect(self.apply_filter)
-        self.project_filter.currentIndexChanged.connect(self.refresh_table)
+        self.search_edit.textChanged.connect(self._search_changed)
+        self.project_filter.currentIndexChanged.connect(self._reset_and_refresh)
         panel_layout.addLayout(toolbar)
         layout.addWidget(panel)
         self.list_layout = panel_layout
@@ -76,15 +77,20 @@ class DailyPage(QWidget):
         selected_id = self.project_filter.currentData()
         self.project_filter.blockSignals(True)
         self.project_filter.clear()
-        for project in self.project_service.get_all_projects():
-            self.project_filter.addItem(display_project_name(project.name), project.id)
+        for project_id, project_name in self.project_service.get_project_options():
+            self.project_filter.addItem(display_project_name(project_name), project_id)
         index = self.project_filter.findData(selected_id)
         if index >= 0:
             self.project_filter.setCurrentIndex(index)
         self.project_filter.blockSignals(False)
 
     def reload_data(self):
+        self.pagination.reset()
         self.refresh_projects()
+        self.refresh_table()
+
+    def _reset_and_refresh(self):
+        self.pagination.reset()
         self.refresh_table()
 
     def refresh_table(self):
@@ -92,25 +98,32 @@ class DailyPage(QWidget):
             self.list_layout.removeWidget(self.report_table)
             self.report_table.deleteLater()
         project_id = self.project_filter.currentData()
-        total, reports = self.report_service.get_reports_page(self.pagination.page, self.pagination.page_size, project_id)
-        self.pagination.set_total(total)
+        total, reports = self.report_service.get_reports_page(
+            self.pagination.page, self.pagination.page_size, project_id, self.search_edit.text()
+        )
+        if self.pagination.set_total(total):
+            total, reports = self.report_service.get_reports_page(
+                self.pagination.page, self.pagination.page_size, project_id, self.search_edit.text()
+            )
         rows = [[
             report.id, "", report.report_date, report.work_content, report.problems,
             report.solutions, report.next_plan, report.status,
-        ] for report in reports]
+        ] for report, _project_name in reports]
         self.report_table = make_table(
-            ["ID", "操作", "日期", "SOP主题/步骤", "遇到的问题", "解决方法", "后续建议", "状态"], rows
+            ["编号", "操作", "日期", "SOP主题/步骤", "遇到的问题", "解决方法", "后续建议", "状态"], rows
         )
         self.report_table.setColumnHidden(0, True)
         add_table_actions(
-            self.report_table, [report.id for report in reports], self.edit_report, self.delete_report
+            self.report_table, [report.id for report, _project_name in reports], self.edit_report, self.delete_report
         )
         self.report_table.cellDoubleClicked.connect(lambda _row, _column: self.edit_selected_report())
         self.list_layout.insertWidget(self.list_layout.count() - 1, self.report_table, 1)
-        self.apply_filter()
-
     def apply_filter(self):
-        filter_table(self.report_table, self.search_edit.text())
+        self._search_changed()
+
+    def _search_changed(self):
+        self.pagination.reset()
+        self.refresh_table()
 
     def _selected_report_id(self):
         row = self.report_table.currentRow()
@@ -119,8 +132,8 @@ class DailyPage(QWidget):
 
     def open_report_dialog(self, report=None):
         project_box = make_searchable_combo(QComboBox())
-        for project in self.project_service.get_all_projects():
-            project_box.addItem(display_project_name(project.name), project.id)
+        for project_id, project_name in self.project_service.get_project_options():
+            project_box.addItem(display_project_name(project_name), project_id)
         selected_project = report.project_id if report else self.project_filter.currentData()
         index = project_box.findData(selected_project)
         if index >= 0:

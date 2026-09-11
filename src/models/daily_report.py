@@ -7,7 +7,8 @@ class DailyReport(Base):
     __tablename__ = 'daily_reports'
     
     id = Column(Integer, primary_key=True, autoincrement=True)
-    project_id = Column(Integer, ForeignKey('projects.id', ondelete='CASCADE'), nullable=False)
+    owner_id = Column(Integer, ForeignKey("users.id", ondelete="RESTRICT"), nullable=True, index=True)
+    project_id = Column(Integer, ForeignKey('projects.id', ondelete='SET NULL'), nullable=True)
     report_date = Column(Date, nullable=False, index=True)
     work_content = Column(Text)
     problems = Column(Text)
@@ -20,6 +21,7 @@ class DailyReport(Base):
     
     # 关系
     project = relationship("Project", back_populates="daily_reports")
+    owner = relationship("User", foreign_keys=[owner_id])
     
     # 一个项目一天一条 SOP 问题记录
     __table_args__ = (

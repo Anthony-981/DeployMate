@@ -1,4 +1,5 @@
 from PySide6.QtWidgets import (
+    QApplication,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -6,10 +7,11 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QStackedWidget,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
-from PySide6.QtCore import Qt, QTimer, QSettings
+from PySide6.QtCore import Qt, QTimer, QSettings, Signal
 from PySide6.QtGui import QFont
 from PySide6.QtGui import QIcon
 from src.config import resolve_resource_path
@@ -17,10 +19,14 @@ from src.ui.widgets.common import APP_STYLESHEET
 from src.services.backup_service import BackupService
 from src.config import APP_VERSION
 from datetime import datetime, timedelta
+from threading import Lock, Thread
 
 class MainWindow(QMainWindow):
-    def __init__(self):
+    logout_requested = Signal()
+
+    def __init__(self, current_user=None):
         super().__init__()
+        self.current_user = current_user
         self.setWindowTitle(f"DeployMate {APP_VERSION} - 运维实施工程师记录助手")
         self.setMinimumSize(1100, 720)
         logo_path = resolve_resource_path("logo.png")
@@ -29,25 +35,75 @@ class MainWindow(QMainWindow):
         self.setStyleSheet(APP_STYLESHEET)
         
         self.init_ui()
+        self._backup_lock = Lock()
         self.backup_timer = QTimer(self)
         self.backup_timer.timeout.connect(self._run_scheduled_backup)
         self.backup_timer.start(60 * 1000)
         QTimer.singleShot(1500, self._run_scheduled_backup)
     
     def init_ui(self):
-        # 主容器
+        # 顶部栏与内容区按首页参考图组织，导航默认收起。
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
-        
-        main_layout = QHBoxLayout(central_widget)
-        main_layout.setContentsMargins(18, 18, 18, 18)
-        main_layout.setSpacing(18)
-        
-        # 左侧导航栏
+
+        root_layout = QVBoxLayout(central_widget)
+        root_layout.setContentsMargins(0, 0, 0, 0)
+        root_layout.setSpacing(0)
+
+        top_bar = QFrame()
+        top_bar.setObjectName("topBar")
+        top_bar.setFixedHeight(54)
+        top_bar.setStyleSheet("""
+            QFrame#topBar {
+                background: #ffffff;
+                border-bottom: 1px solid #dfe8f5;
+            }
+        """)
+        top_layout = QHBoxLayout(top_bar)
+        top_layout.setContentsMargins(12, 0, 12, 0)
+        menu_button = QToolButton()
+        menu_button.setText("☰")
+        menu_button.setToolTip("打开或收起导航菜单")
+        menu_button.setFixedSize(34, 34)
+        menu_button.setStyleSheet("""
+            QToolButton { color: #31588f; border: none; font-size: 22px; }
+            QToolButton:hover { background: #edf4ff; border-radius: 8px; }
+        """)
+        top_layout.addWidget(menu_button)
+        top_title = QLabel("DeployMate")
+        top_title.setStyleSheet("font-size: 16px; font-weight: 900; color: #17417e;")
+        top_layout.addWidget(top_title)
+        top_layout.addStretch()
+        display_name = getattr(self.current_user, "display_name", "") or "本地用户"
+        username = getattr(self.current_user, "username", "") or "未登录"
+        top_account = QLabel(f"当前用户：{display_name}（{username}）")
+        top_account.setObjectName("currentUserLabel")
+        top_account.setStyleSheet("color: #49658b; font-weight: 700; padding: 0 10px;")
+        top_layout.addWidget(top_account)
+        top_logout = QPushButton("退出登录")
+        top_logout.setFixedHeight(32)
+        top_logout.setStyleSheet("""
+            QPushButton {
+                background: #edf4ff; color: #315dd3;
+                border: 1px solid #d8e4fb; border-radius: 8px;
+                padding: 0 12px; font-weight: 700;
+            }
+            QPushButton:hover { background: #e3edff; }
+        """)
+        top_logout.clicked.connect(self.logout)
+        top_layout.addWidget(top_logout)
+        root_layout.addWidget(top_bar)
+
+        body_layout = QHBoxLayout()
+        body_layout.setContentsMargins(16, 14, 16, 16)
+        body_layout.setSpacing(14)
+        root_layout.addLayout(body_layout, 1)
+
         nav_frame = self.create_nav_bar()
-        main_layout.addWidget(nav_frame)
-        
-        # 右侧内容区
+        nav_frame.setVisible(False)
+        menu_button.clicked.connect(lambda: nav_frame.setVisible(not nav_frame.isVisible()))
+        body_layout.addWidget(nav_frame)
+
         self.content_shell = QFrame()
         self.content_shell.setObjectName("contentShell")
         self.content_shell.setStyleSheet("""
@@ -63,7 +119,7 @@ class MainWindow(QMainWindow):
         self.content_stack = QStackedWidget()
         self.content_stack.setStyleSheet("background: transparent;")
         content_layout.addWidget(self.content_stack)
-        main_layout.addWidget(self.content_shell)
+        body_layout.addWidget(self.content_shell, 1)
         
         # 添加页面（暂时用占位符）
         self.add_pages()
@@ -121,11 +177,15 @@ class MainWindow(QMainWindow):
             self.nav_buttons.append(btn)
         
         nav_layout.addStretch()
-        
         # 默认选中首页
         self.nav_buttons[0].setStyleSheet(self.get_nav_button_style(True))
         
         return nav_frame
+
+    def logout(self):
+        self._logging_out = True
+        self.close()
+        QApplication.instance().quit()
     
     def get_nav_button_style(self, active: bool):
         """获取导航按钮样式"""
@@ -195,32 +255,31 @@ class MainWindow(QMainWindow):
         interval = timedelta(days=7 if frequency == "每周" else 1)
         if last and datetime.now() - last < interval:
             return
-        try:
-            file_format = "xlsx" if str(settings.value("backup_format", "")).startswith("Excel") else "db"
-            path = BackupService().backup_now(file_format=file_format)
-            keep_count = int(settings.value("backup_retention", 10) or 10)
-            BackupService().prune(keep_count=max(1, keep_count))
-            settings.setValue("last_backup_path", path)
-            settings.setValue("last_backup_at", datetime.now().isoformat(timespec="seconds"))
-            settings.sync()
-        except Exception:
-            # Automatic backup must never prevent the application from opening.
+        if not self._backup_lock.acquire(blocking=False):
             return
+        file_format = "xlsx" if str(settings.value("backup_format", "")).startswith("Excel") else "db"
+        keep_count = max(1, int(settings.value("backup_retention", 10) or 10))
 
-    def closeEvent(self, event):
-        """Persist a final backup on normal close when automatic backup is enabled."""
-        settings = QSettings("DeployMate", "DeployMate")
-        if settings.value("backup_frequency", "每天") != "关闭":
+        def backup_in_background():
             try:
-                file_format = "xlsx" if str(settings.value("backup_format", "")).startswith("Excel") else "db"
-                path = BackupService().backup_now(file_format=file_format)
-                keep_count = int(settings.value("backup_retention", 10) or 10)
-                BackupService().prune(keep_count=max(1, keep_count))
-                settings.setValue("last_backup_path", path)
-                settings.setValue("last_backup_at", datetime.now().isoformat(timespec="seconds"))
-                settings.sync()
+                service = BackupService()
+                path = service.backup_now(file_format=file_format)
+                service.prune(keep_count=keep_count)
+                worker_settings = QSettings("DeployMate", "DeployMate")
+                worker_settings.setValue("last_backup_path", path)
+                worker_settings.setValue("last_backup_at", datetime.now().isoformat(timespec="seconds"))
+                worker_settings.sync()
             except Exception:
                 pass
+            finally:
+                self._backup_lock.release()
+
+        Thread(target=backup_in_background, name="deploymate-backup", daemon=True).start()
+
+    def closeEvent(self, event):
+        """Database writes are committed immediately; scheduled backups run off the UI thread."""
+        if not getattr(self, "_logging_out", False):
+            QApplication.instance().quit()
         super().closeEvent(event)
     
     def add_pages(self):
@@ -235,8 +294,14 @@ class MainWindow(QMainWindow):
         from src.ui.pages.settings_page import SettingsPage
 
         self.page_factories = [
-            HomePage, ProjectPage, MachinePage, ImportPage,
-            DailyPage, ExpensePage, ExportPage, SettingsPage,
+            lambda: HomePage(self.current_user),
+            lambda: ProjectPage(self.current_user),
+            lambda: MachinePage(self.current_user),
+            lambda: ImportPage(self.current_user),
+            lambda: DailyPage(self.current_user),
+            lambda: ExpensePage(self.current_user),
+            lambda: ExportPage(self.current_user),
+            lambda: SettingsPage(self.current_user, on_password_changed=self.logout),
         ]
         self.pages = [None] * len(self.page_factories)
         for _index in self.page_factories:

@@ -2,6 +2,7 @@ from PySide6.QtCore import QDate, Qt
 from PySide6.QtWidgets import QComboBox, QLineEdit, QVBoxLayout, QWidget, QDialog, QLabel
 
 from src.services.project_service import ProjectService
+from src.services.user_service import UserService
 from src.ui.widgets.common import (
     ClickableDateEdit,
     FormDialog,
@@ -23,9 +24,12 @@ from src.utils.validators import PROJECT_FIELD_LIMITS
 
 
 class ProjectPage(QWidget):
-    def __init__(self):
+    def __init__(self, current_user=None):
         super().__init__()
-        self.service = ProjectService()
+        self.current_user = current_user
+        self.service = ProjectService(current_user)
+        self.user_service = UserService()
+        self.is_admin = self.user_service.is_admin(current_user)
         self.build_ui()
 
     def build_ui(self):
@@ -39,6 +43,13 @@ class ProjectPage(QWidget):
 
         panel, panel_layout = make_panel("项目列表")
         toolbar, self.search_edit, refresh_btn, edit_btn, delete_btn, add_btn = make_management_toolbar("添加项目")
+        if self.is_admin:
+            self.user_filter = QComboBox()
+            self.user_filter.setMinimumWidth(240)
+            self.user_filter.currentIndexChanged.connect(self.apply_filter)
+            toolbar.insertWidget(1, QLabel("用户筛选："))
+            toolbar.insertWidget(2, self.user_filter)
+            self.refresh_users()
         refresh_btn.clicked.connect(self.refresh_table)
         edit_btn.clicked.connect(self.edit_selected_project)
         delete_btn.clicked.connect(self.delete_selected_project)
@@ -60,14 +71,31 @@ class ProjectPage(QWidget):
         if hasattr(self, "project_table"):
             self.list_layout.removeWidget(self.project_table)
             self.project_table.deleteLater()
-        total, projects = self.service.get_projects_page(self.pagination.page, self.pagination.page_size)
-        self.pagination.set_total(total)
-        rows = [[
-            project.id, "", display_project_name(project.name), project.sales, project.project_code, project.location,
-            project.start_date, project.end_date, project.status,
-        ] for project in projects]
+        owner_id = self.user_filter.currentData() if self.is_admin else None
+        total, projects = self.service.get_projects_page(
+            self.pagination.page, self.pagination.page_size, self.search_edit.text(), owner_id
+        )
+        if self.pagination.set_total(total):
+            total, projects = self.service.get_projects_page(
+                self.pagination.page, self.pagination.page_size, self.search_edit.text(), owner_id
+            )
+        owner_labels = self.user_service.get_user_label_map(
+            [project.owner_id for project in projects if project.owner_id], actor=self.current_user
+        ) if self.is_admin else {}
+        rows = []
+        for project in projects:
+            row = [
+                project.id, "", display_project_name(project.name), project.sales,
+                project.project_code, project.location, project.start_date, project.end_date, project.status,
+            ]
+            if self.is_admin:
+                row.insert(2, owner_labels.get(project.owner_id, "未分配用户"))
+            rows.append(row)
+        headers = ["编号", "操作", "项目客户名称", "销售", "订单编号", "地点", "开始日期", "结束日期", "状态"]
+        if self.is_admin:
+            headers.insert(2, "所属用户")
         self.project_table = make_table(
-            ["ID", "操作", "项目客户名称", "销售", "订单编号", "地点", "开始日期", "结束日期", "状态"], rows
+            headers, rows
         )
         self.project_table.setColumnHidden(0, True)
         add_table_actions(
@@ -75,13 +103,27 @@ class ProjectPage(QWidget):
         )
         self.project_table.cellDoubleClicked.connect(lambda _row, _column: self.edit_selected_project())
         self.list_layout.insertWidget(self.list_layout.count() - 1, self.project_table, 1)
-        self.apply_filter()
-
     def reload_data(self):
+        self.pagination.reset()
+        if self.is_admin:
+            self.refresh_users()
         self.refresh_table()
 
     def apply_filter(self):
-        filter_table(self.project_table, self.search_edit.text())
+        self.pagination.reset()
+        self.refresh_table()
+
+    def refresh_users(self):
+        self.user_filter.blockSignals(True)
+        selected = self.user_filter.currentData()
+        self.user_filter.clear()
+        self.user_filter.addItem("全部用户", None)
+        for user_id, label in self.user_service.get_user_options(actor=self.current_user):
+            self.user_filter.addItem(label, user_id)
+        index = self.user_filter.findData(selected)
+        if index >= 0:
+            self.user_filter.setCurrentIndex(index)
+        self.user_filter.blockSignals(False)
 
     def show_completeness(self):
         result = self.service.get_completeness()

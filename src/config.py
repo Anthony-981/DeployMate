@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 APP_NAME = "DeployMate"
-APP_VERSION = "V0.3"
+APP_VERSION = "V1.0"
 
 
 def get_db_mode() -> str:

@@ -1,6 +1,7 @@
 from typing import List, Optional
-from src.models import Machine, get_session
-from src.models import Project
+from src.models import Machine, Project, get_session
+from src.services.access_service import owner_id_for, scope_query
+from src.services.user_service import UserService
 from sqlalchemy import or_, cast, String
 from src.utils.validators import (
     MACHINE_FIELD_LIMITS,
@@ -13,47 +14,68 @@ from src.utils.validators import (
 )
 
 class MachineService:
-    def __init__(self):
-        pass
+    def __init__(self, current_user=None):
+        self.current_user = current_user
+
+    def _query(self, session):
+        return scope_query(session.query(Machine), Machine, self.current_user)
+
+    def _project(self, session, project_id):
+        return scope_query(session.query(Project), Project, self.current_user).filter(
+            Project.id == int(project_id)
+        ).first()
     
     def get_machines_by_project(self, project_id: int) -> List[Machine]:
         """获取项目的所有机器"""
         session = get_session()
         try:
-            return session.query(Machine).filter(Machine.project_id == project_id).all()
+            return self._query(session).filter(Machine.project_id == project_id).all()
         finally:
             session.close()
 
     def get_all_machines(self) -> List[Machine]:
         session = get_session()
         try:
-            return session.query(Machine).order_by(Machine.project_id, Machine.id).all()
+            return self._query(session).order_by(Machine.project_id, Machine.id).all()
         finally:
             session.close()
 
-    def _scoped_query(self, session, project_id=None, search=""):
-        query = session.query(Machine)
+    def _scoped_query(self, session, project_id=None, search="", owner_id=None):
+        query = self._query(session)
         if project_id:
             query = query.filter(Machine.project_id == int(project_id))
+        if owner_id and UserService.is_admin(self.current_user):
+            query = query.join(Project, Project.id == Machine.project_id).filter(
+                Project.owner_id == int(owner_id)
+            )
         keyword = (search or "").strip()
         if keyword:
             pattern = f"%{keyword}%"
-            query = query.join(Project, Project.id == Machine.project_id).filter(or_(
+            if not owner_id:
+                query = query.join(Project, Project.id == Machine.project_id)
+            query = query.filter(or_(
                     Project.name.ilike(pattern), Project.project_code.ilike(pattern),
                     *[cast(getattr(Machine, field), String).ilike(pattern) for field in (
                         "role", "ip", "business_ip", "cluster_ip", "compute_ip", "storage_ip",
                         "username", "account", "password", "gpu_count", "gpu_model",
                         "gpu_interconnect", "hostname", "os", "cpu", "memory", "gpu", "cuda", "docker",
+                        "extra_info",
                     )]
             ))
         return query
 
-    def get_machines_page(self, page=1, page_size=20, project_id=None, search=""):
+    def get_machines_page(self, page=1, page_size=20, project_id=None, search="", owner_id=None):
         session = get_session()
         try:
-            query = self._scoped_query(session, project_id, search)
+            query = self._scoped_query(session, project_id, search, owner_id)
             query = query.order_by(Machine.project_id, Machine.id)
-            return query.count(), query.offset((page - 1) * page_size).limit(page_size).all()
+            total = query.with_entities(Machine.id).order_by(None).count()
+            if not (search or "").strip() and not owner_id:
+                query = query.join(Project, Project.id == Machine.project_id)
+            rows = query.with_entities(
+                Machine, Project.name.label("project_name")
+            ).offset((page - 1) * page_size).limit(page_size).all()
+            return total, rows
         finally:
             session.close()
     
@@ -61,7 +83,7 @@ class MachineService:
         """根据IP获取机器（用于合并判断）"""
         session = get_session()
         try:
-            return session.query(Machine).filter(
+            return self._query(session).filter(
                 Machine.project_id == project_id,
                 Machine.ip == ip
             ).first()
@@ -71,7 +93,7 @@ class MachineService:
     def get_machine_by_id(self, machine_id: int) -> Optional[Machine]:
         session = get_session()
         try:
-            return session.query(Machine).filter(Machine.id == machine_id).first()
+            return self._query(session).filter(Machine.id == machine_id).first()
         finally:
             session.close()
     
@@ -97,13 +119,17 @@ class MachineService:
         username: str = None,
         account: str = None,
         password: str = None,
-        remarks: str = None
+        remarks: str = None,
+        extra_info: str = None,
     ) -> Machine:
         """创建机器"""
         session = get_session()
         try:
             if not project_id or int(project_id) <= 0:
                 raise ValidationError("项目不能为空")
+            project = self._project(session, project_id)
+            if not project:
+                raise ValidationError("无权访问该项目")
             ip = validate_ipv4(ip, "IP", required=True)
             role = optional_text(role, "角色", MACHINE_FIELD_LIMITS["role"])
             business_ip = validate_ipv4(business_ip, "业务网IP")
@@ -125,6 +151,7 @@ class MachineService:
             account = optional_text(account, "账号", MACHINE_FIELD_LIMITS["username"])
             password = optional_text(password, "密码", MACHINE_FIELD_LIMITS["password"])
             remarks = optional_text(remarks, "备注", MACHINE_FIELD_LIMITS["remarks"])
+            extra_info = optional_text(extra_info, "其他信息", 4000)
 
             duplicate = session.query(Machine).filter(
                 Machine.project_id == project_id,
@@ -134,6 +161,7 @@ class MachineService:
                 raise ValidationError("该项目中已存在相同管理网IP的机器")
 
             machine = Machine(
+                owner_id=project.owner_id or owner_id_for(self.current_user),
                 project_id=project_id,
                 ip=ip,
                 role=role,
@@ -154,7 +182,8 @@ class MachineService:
                 username=username,
                 account=account,
                 password=password,
-                remarks=remarks
+                remarks=remarks,
+                extra_info=extra_info,
             )
             session.add(machine)
             session.commit()
@@ -170,11 +199,14 @@ class MachineService:
         """更新机器"""
         session = get_session()
         try:
-            machine = session.query(Machine).filter(Machine.id == machine_id).first()
+            machine = self._query(session).filter(Machine.id == machine_id).first()
             if not machine:
                 return None
 
             target_project_id = int(kwargs.get("project_id", machine.project_id))
+            project = self._project(session, target_project_id)
+            if not project:
+                raise ValidationError("无权访问目标项目")
             target_ip = validate_ipv4(kwargs.get("ip", machine.ip), "IP", required=True)
             duplicate = session.query(Machine).filter(
                 Machine.project_id == target_project_id,
@@ -188,8 +220,8 @@ class MachineService:
                 if hasattr(machine, key):
                     if key in ["ip", "business_ip", "cluster_ip", "compute_ip", "storage_ip"]:
                         value = validate_ipv4(value, key.replace("_", "").upper() if key != "ip" else "IP", required=(key == "ip"))
-                    elif key in ["role", "hostname", "os", "cpu", "memory", "gpu_model", "gpu_interconnect", "gpu", "cuda", "docker", "username", "account", "password", "remarks"]:
-                        value = optional_text(value, key, MACHINE_FIELD_LIMITS.get(key, 100))
+                    elif key in ["role", "hostname", "os", "cpu", "memory", "gpu_model", "gpu_interconnect", "gpu", "cuda", "docker", "username", "account", "password", "remarks", "extra_info"]:
+                        value = optional_text(value, key, MACHINE_FIELD_LIMITS.get(key, 4000))
                     elif key == "gpu_count":
                         value = validate_positive_int_string(value, "GPU数量", max_len=MACHINE_FIELD_LIMITS["gpu_count"])
                     setattr(machine, key, value)
@@ -217,7 +249,10 @@ class MachineService:
             project_id = int(project_id)
             ip = validate_ipv4(ip, "IP", required=True)
             cleaned_data = self._clean_machine_payload(new_data)
-            existing = session.query(Machine).filter(
+            project = self._project(session, project_id)
+            if not project:
+                raise ValidationError("无权访问目标项目")
+            existing = self._query(session).filter(
                 Machine.project_id == project_id,
                 Machine.ip == ip
             ).first()
@@ -246,7 +281,10 @@ class MachineService:
                 # 新增
                 if require_network:
                     self._validate_required_network(cleaned_data.get("business_ip"), cleaned_data.get("cluster_ip"))
-                machine = Machine(project_id=project_id, ip=ip, **cleaned_data)
+                machine = Machine(
+                    owner_id=project.owner_id or owner_id_for(self.current_user),
+                    project_id=project_id, ip=ip, **cleaned_data
+                )
                 session.add(machine)
                 session.commit()
                 session.refresh(machine)
@@ -261,7 +299,7 @@ class MachineService:
         """删除机器"""
         session = get_session()
         try:
-            machine = session.query(Machine).filter(Machine.id == machine_id).first()
+            machine = self._query(session).filter(Machine.id == machine_id).first()
             if not machine:
                 return False
             
@@ -274,12 +312,12 @@ class MachineService:
         finally:
             session.close()
 
-    def delete_all_machines(self, project_id=None, search="") -> int:
+    def delete_all_machines(self, project_id=None, search="", owner_id=None) -> int:
         """Delete all machines in the current project/search scope."""
         session = get_session()
         try:
-            ids = self._scoped_query(session, project_id, search).with_entities(Machine.id)
-            count = session.query(Machine).filter(Machine.id.in_(ids)).delete(
+            ids = self._scoped_query(session, project_id, search, owner_id).with_entities(Machine.id)
+            count = self._query(session).filter(Machine.id.in_(ids)).delete(
                 synchronize_session=False
             )
             session.commit()
@@ -294,7 +332,7 @@ class MachineService:
         """获取机器总数"""
         session = get_session()
         try:
-            return session.query(Machine).count()
+            return self._query(session).count()
         finally:
             session.close()
 
@@ -309,6 +347,8 @@ class MachineService:
                 cleaned[key] = validate_positive_int_string(value, "GPU数量", max_len=MACHINE_FIELD_LIMITS["gpu_count"])
             elif key in MACHINE_FIELD_LIMITS:
                 cleaned[key] = optional_text(value, key, MACHINE_FIELD_LIMITS[key])
+            elif key == "extra_info":
+                cleaned[key] = optional_text(value, "其他信息", 4000)
             else:
                 cleaned[key] = clean_text(value)
         return cleaned

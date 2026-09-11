@@ -1,6 +1,6 @@
 from datetime import datetime
+import os
 from pathlib import Path
-import shutil
 import sqlite3
 from zipfile import ZipFile
 from PySide6.QtCore import QSettings
@@ -19,11 +19,20 @@ class BackupService:
         target_dir.mkdir(parents=True, exist_ok=True)
         suffix = ".xlsx" if file_format == "xlsx" else ".db"
         target = target_dir / f"deploymate_{datetime.now():%Y%m%d_%H%M%S}{suffix}"
-        if suffix == ".xlsx":
-            from src.services.export_service import ExportService
-            ExportService().export_projects(None, str(target), "xlsx")
-        else:
-            shutil.copy2(source, target)
+        temporary = target.with_name(f".{target.stem}.tmp{target.suffix}")
+        temporary.unlink(missing_ok=True)
+        try:
+            if suffix == ".xlsx":
+                from src.services.export_service import ExportService
+                ExportService().export_projects(None, str(temporary), "xlsx")
+            else:
+                with sqlite3.connect(source) as source_db, sqlite3.connect(temporary) as target_db:
+                    source_db.backup(target_db, pages=1024)
+            os.replace(temporary, target)
+        except Exception:
+            temporary.unlink(missing_ok=True)
+            target.unlink(missing_ok=True)
+            raise
         return str(target)
 
     def verify(self, backup_path: str) -> tuple[bool, str]:
@@ -69,5 +78,6 @@ class BackupService:
         if base.engine is not None:
             base.engine.dispose()
         target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, target)
+        with sqlite3.connect(source) as source_db, sqlite3.connect(target) as target_db:
+            source_db.backup(target_db, pages=1024)
         return str(target)

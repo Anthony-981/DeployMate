@@ -1,6 +1,8 @@
 from typing import List, Optional
 from datetime import date
-from src.models import DailyReport, get_session
+from sqlalchemy import cast, or_, String
+from src.models import DailyReport, Project, get_session
+from src.services.access_service import owner_id_for, scope_query
 from src.utils.validators import (
     DAILY_FIELD_LIMITS,
     ValidationError,
@@ -16,21 +18,46 @@ except ImportError:  # pragma: no cover - dependency is part of requirements.txt
     Document = None
 
 class DailyReportService:
-    def get_reports_page(self, page=1, page_size=20, project_id=None):
+    def __init__(self, current_user=None):
+        self.current_user = current_user
+
+    def _query(self, session):
+        return scope_query(session.query(DailyReport), DailyReport, self.current_user)
+
+    def _project(self, session, project_id):
+        return scope_query(session.query(Project), Project, self.current_user).filter(
+            Project.id == int(project_id)
+        ).first()
+
+    def get_reports_page(self, page=1, page_size=20, project_id=None, search=""):
         session = get_session()
         try:
-            query = session.query(DailyReport)
+            query = self._query(session)
             if project_id:
                 query = query.filter(DailyReport.project_id == project_id)
+            keyword = (search or "").strip()
+            if keyword:
+                pattern = f"%{keyword}%"
+                query = query.outerjoin(Project, Project.id == DailyReport.project_id).filter(or_(
+                    Project.name.ilike(pattern),
+                    *[
+                        cast(getattr(DailyReport, field), String).ilike(pattern)
+                        for field in ("report_date", "work_content", "problems", "solutions", "next_plan", "remarks", "status")
+                    ],
+                ))
             query = query.order_by(DailyReport.report_date.desc())
-            return query.count(), query.offset((page - 1) * page_size).limit(page_size).all()
+            total = query.with_entities(DailyReport.id).order_by(None).count()
+            rows = query.outerjoin(Project, Project.id == DailyReport.project_id).with_entities(
+                DailyReport, Project.name.label("project_name")
+            ).offset((page - 1) * page_size).limit(page_size).all()
+            return total, rows
         finally:
             session.close()
     def get_reports_by_project(self, project_id: int) -> List[DailyReport]:
         session = get_session()
         try:
             return (
-                session.query(DailyReport)
+                self._query(session)
                 .filter(DailyReport.project_id == project_id)
                 .order_by(DailyReport.report_date.desc())
                 .all()
@@ -41,7 +68,7 @@ class DailyReportService:
     def get_report_by_id(self, report_id: int) -> DailyReport | None:
         session = get_session()
         try:
-            return session.query(DailyReport).filter(DailyReport.id == report_id).first()
+            return self._query(session).filter(DailyReport.id == report_id).first()
         finally:
             session.close()
 
@@ -60,6 +87,9 @@ class DailyReportService:
         try:
             if not project_id or int(project_id) <= 0:
                 raise ValidationError("项目不能为空")
+            project = self._project(session, project_id)
+            if not project:
+                raise ValidationError("无权访问该项目")
             work_content = require_text(work_content, "SOP主题/步骤", DAILY_FIELD_LIMITS["work_content"])
             problems = optional_text(problems, "遇到的问题", DAILY_FIELD_LIMITS["problems"])
             solutions = optional_text(solutions, "解决方法", DAILY_FIELD_LIMITS["solutions"])
@@ -67,7 +97,7 @@ class DailyReportService:
             remarks = optional_text(remarks, "备注", DAILY_FIELD_LIMITS["remarks"])
             status = validate_choice(status, "SOP记录状态", {"草稿", "已完成"})
 
-            existing = session.query(DailyReport).filter(
+            existing = self._query(session).filter(
                 DailyReport.project_id == project_id,
                 DailyReport.report_date == report_date,
             ).first()
@@ -83,6 +113,7 @@ class DailyReportService:
                 return existing
 
             report = DailyReport(
+                owner_id=project.owner_id or owner_id_for(self.current_user),
                 project_id=project_id,
                 report_date=report_date,
                 work_content=work_content,
@@ -105,13 +136,16 @@ class DailyReportService:
     def update_report(self, report_id: int, **kwargs) -> DailyReport | None:
         session = get_session()
         try:
-            report = session.query(DailyReport).filter(DailyReport.id == report_id).first()
+            report = self._query(session).filter(DailyReport.id == report_id).first()
             if not report:
                 return None
             target_project_id = int(kwargs.get("project_id", report.project_id))
             target_date = kwargs.get("report_date", report.report_date)
             if not target_project_id:
                 raise ValidationError("项目不能为空")
+            project = self._project(session, target_project_id)
+            if not project:
+                raise ValidationError("无权访问目标项目")
             if not target_date:
                 raise ValidationError("SOP记录日期不能为空")
             duplicate = session.query(DailyReport).filter(
@@ -144,7 +178,7 @@ class DailyReportService:
     def delete_report(self, report_id: int) -> bool:
         session = get_session()
         try:
-            report = session.query(DailyReport).filter(DailyReport.id == report_id).first()
+            report = self._query(session).filter(DailyReport.id == report_id).first()
             if not report:
                 return False
             session.delete(report)
@@ -159,8 +193,8 @@ class DailyReportService:
     def delete_all_reports(self) -> int:
         session = get_session()
         try:
-            count = session.query(DailyReport).count()
-            session.query(DailyReport).delete(synchronize_session=False)
+            count = self._query(session).count()
+            self._query(session).delete(synchronize_session=False)
             session.commit()
             return count
         except Exception:
@@ -172,7 +206,7 @@ class DailyReportService:
     def get_report_count(self) -> int:
         session = get_session()
         try:
-            return session.query(DailyReport).count()
+            return self._query(session).count()
         finally:
             session.close()
 

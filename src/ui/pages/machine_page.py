@@ -5,6 +5,7 @@ from PySide6.QtWidgets import QApplication, QComboBox, QLabel, QLineEdit, QHBoxL
 from src.services.machine_service import MachineService
 from src.services.project_service import ProjectService
 from src.services.ssh_service import SSHService
+from src.services.user_service import UserService
 from src.ui.dialogs.network_mapping_dialog import NetworkMappingDialog
 from src.ui.widgets.common import (
     FormDialog,
@@ -33,10 +34,13 @@ IP_REGEX = QRegularExpression(
 
 
 class MachinePage(QWidget):
-    def __init__(self):
+    def __init__(self, current_user=None):
         super().__init__()
-        self.project_service = ProjectService()
-        self.machine_service = MachineService()
+        self.current_user = current_user
+        self.project_service = ProjectService(current_user)
+        self.machine_service = MachineService(current_user)
+        self.user_service = UserService()
+        self.is_admin = self.user_service.is_admin(current_user)
         self.ssh_service = SSHService()
         self.build_ui()
 
@@ -49,6 +53,14 @@ class MachinePage(QWidget):
         scope_panel, scope_layout = make_panel("项目工作区")
         scope_row = QHBoxLayout()
         scope_row.setSpacing(12)
+        if self.is_admin:
+            self.user_filter = make_searchable_combo(QComboBox())
+            self.user_filter.setMinimumWidth(260)
+            self.user_filter.setMaximumWidth(360)
+            user_label = QLabel("用户筛选")
+            user_label.setStyleSheet("font-weight: 700; color: #425069;")
+            scope_row.addWidget(user_label)
+            scope_row.addWidget(self.user_filter)
         self.project_filter = make_searchable_combo(QComboBox())
         self.project_filter.setMinimumWidth(380)
         self.project_filter.setMaximumWidth(520)
@@ -85,6 +97,8 @@ class MachinePage(QWidget):
         ssh_btn.clicked.connect(self.collect_by_ssh)
         toolbar.insertWidget(toolbar.count() - 1, ssh_btn)
         self.search_edit.textChanged.connect(self.search_all_fields)
+        if self.is_admin:
+            self.user_filter.currentIndexChanged.connect(self._user_scope_changed)
         self.project_filter.currentIndexChanged.connect(self.refresh_table)
         panel_layout.addLayout(toolbar)
         layout.addWidget(panel)
@@ -92,6 +106,28 @@ class MachinePage(QWidget):
         self.pagination = PaginationBar()
         self.pagination.page_changed.connect(lambda _page: self.refresh_table())
         panel_layout.addWidget(self.pagination)
+        if self.is_admin:
+            self.refresh_users()
+        self.refresh_projects()
+        self.refresh_table()
+
+    def refresh_users(self):
+        self.user_filter.blockSignals(True)
+        selected_id = self.user_filter.currentData()
+        self.user_filter.clear()
+        self.user_filter.addItem("全部用户", None)
+        for user_id, label in self.user_service.get_user_options(actor=self.current_user):
+            self.user_filter.addItem(label, user_id)
+        index = self.user_filter.findData(selected_id)
+        if index >= 0:
+            self.user_filter.setCurrentIndex(index)
+        self.user_filter.blockSignals(False)
+
+    def _selected_owner_id(self):
+        return self.user_filter.currentData() if self.is_admin else None
+
+    def _user_scope_changed(self):
+        self.pagination.reset()
         self.refresh_projects()
         self.refresh_table()
 
@@ -100,14 +136,16 @@ class MachinePage(QWidget):
         self.project_filter.blockSignals(True)
         self.project_filter.clear()
         self.project_filter.addItem("全部项目", None)
-        for project in self.project_service.get_all_projects():
-            self.project_filter.addItem(display_project_name(project.name), project.id)
+        for project_id, project_name in self.project_service.get_project_options(self._selected_owner_id()):
+            self.project_filter.addItem(display_project_name(project_name), project_id)
         index = self.project_filter.findData(selected_id)
         if index >= 0:
             self.project_filter.setCurrentIndex(index)
         self.project_filter.blockSignals(False)
 
     def reload_data(self):
+        if self.is_admin:
+            self.refresh_users()
         self.refresh_projects()
         self.refresh_table()
 
@@ -123,42 +161,59 @@ class MachinePage(QWidget):
             self.machine_table.deleteLater()
         project_id = self.project_filter.currentData()
         total, machines = self.machine_service.get_machines_page(
-            self.pagination.page, self.pagination.page_size, project_id, self.search_edit.text()
+            self.pagination.page, self.pagination.page_size, project_id,
+            self.search_edit.text(), self._selected_owner_id()
         )
-        self.pagination.set_total(total)
+        if self.pagination.set_total(total):
+            total, machines = self.machine_service.get_machines_page(
+                self.pagination.page, self.pagination.page_size, project_id,
+                self.search_edit.text(), self._selected_owner_id()
+            )
         selected_name = self.project_filter.currentText().strip() or "全部项目"
         self.project_summary.setText(f"{selected_name} · 当前显示 {total} 台机器")
-        project_labels = {project.id: display_project_name(project.name) for project in self.project_service.get_all_projects()}
-        rows = [[
-            m.id, "", project_labels.get(m.project_id, "-"), m.role, m.ip, m.business_ip,
-            m.cluster_ip, m.compute_ip, m.storage_ip,
-            m.username or m.account, "", m.gpu_count, m.gpu_model,
-            m.gpu_interconnect, m.hostname, m.os, m.cpu, m.memory, m.gpu, m.cuda, m.docker,
-        ] for m in machines]
+        owner_labels = self.user_service.get_user_label_map(
+            [m.owner_id for m, _project_name in machines if m.owner_id], actor=self.current_user
+        ) if self.is_admin else {}
+        rows = []
+        for m, project_name in machines:
+            row = [
+                m.id, "", display_project_name(project_name), m.role, m.ip, m.business_ip,
+                m.cluster_ip, m.compute_ip, m.storage_ip,
+                m.username or m.account, "", m.gpu_count, m.gpu_model,
+                m.gpu_interconnect, m.hostname, m.os, m.cpu, m.memory, m.gpu, m.cuda, m.docker,
+                m.remarks or "", m.extra_info or "",
+            ]
+            if self.is_admin:
+                row.insert(2, owner_labels.get(m.owner_id, "未分配用户"))
+            rows.append(row)
+        headers = [
+            "编号", "操作", "所属项目", "角色", "管理网IP", "业务网IP", "集群网IP", "计算网IP", "存储网IP",
+            "用户名", "密码", "GPU数量", "GPU型号", "GPU互联", "主机名", "操作系统", "处理器",
+            "内存", "显卡", "计算平台版本", "容器版本", "备注", "其他信息",
+        ]
+        if self.is_admin:
+            headers.insert(2, "所属用户")
         self.machine_table = make_table(
-            ["ID", "操作", "所属项目", "角色", "管理网IP", "业务网IP", "集群网IP", "计算网IP", "存储网IP",
-             "用户名", "密码", "GPU数量", "GPU型号", "GPU互联", "主机名", "OS", "CPU",
-             "内存", "GPU", "CUDA", "Docker"],
-            rows,
+            headers, rows,
         )
         self.machine_table.setColumnHidden(0, True)
-        password_column = 10
-        for row, machine in enumerate(machines):
+        password_column = 11 if self.is_admin else 10
+        for row, (machine, _project_name) in enumerate(machines):
             self.machine_table.setCellWidget(row, password_column, PasswordCellWidget(machine.password))
         if machines:
             password_width = max(
                 150,
-                max(len(str(machine.password or "")) * 12 + 108 for machine in machines),
+                max(len(str(machine.password or "")) * 12 + 108 for machine, _project_name in machines),
             )
             self.machine_table.setColumnWidth(password_column, password_width)
         add_table_actions(
-            self.machine_table, [machine.id for machine in machines], self.edit_machine, self.delete_machine
+            self.machine_table, [machine.id for machine, _project_name in machines], self.edit_machine, self.delete_machine
         )
         self.machine_table.cellDoubleClicked.connect(lambda _row, _column: self.edit_selected_machine())
         self.list_layout.insertWidget(self.list_layout.count() - 1, self.machine_table, 1)
 
     def search_all_fields(self):
-        self.pagination.page = 1
+        self.pagination.reset()
         self.refresh_table()
 
     def _selected_machine_id(self):
@@ -169,8 +224,8 @@ class MachinePage(QWidget):
     def _make_machine_fields(self, machine=None, prefill=None):
         prefill = prefill or {}
         project_box = make_searchable_combo(QComboBox())
-        for project in self.project_service.get_all_projects():
-            project_box.addItem(display_project_name(project.name), project.id)
+        for project_id, project_name in self.project_service.get_project_options(self._selected_owner_id()):
+            project_box.addItem(display_project_name(project_name), project_id)
         selected_project = machine.project_id if machine else (prefill.get("project_id") or self.project_filter.currentData())
         index = project_box.findData(selected_project)
         if index >= 0:
@@ -179,7 +234,7 @@ class MachinePage(QWidget):
         names = [
             "role", "ip", "business_ip", "cluster_ip", "compute_ip", "storage_ip", "username",
             "password", "gpu_count", "gpu_model", "gpu_interconnect", "hostname", "os", "cpu",
-            "memory", "gpu", "cuda", "docker",
+            "memory", "gpu", "cuda", "docker", "extra_info",
         ]
         edits = {
             name: PasswordLineEdit(str(prefill.get(name, getattr(machine, name, "") if machine else "") or ""))
@@ -206,6 +261,7 @@ class MachinePage(QWidget):
             ("GPU互联", edits["gpu_interconnect"]), ("主机名", edits["hostname"]),
             ("OS", edits["os"]), ("CPU", edits["cpu"]), ("内存", edits["memory"]),
             ("GPU", edits["gpu"]), ("CUDA", edits["cuda"]), ("Docker", edits["docker"]),
+            ("其他信息", edits["extra_info"]),
         ]
         dialog = FormDialog(
             "编辑机器" if machine else "添加机器",
@@ -263,7 +319,7 @@ class MachinePage(QWidget):
     def delete_all_machines(self):
         project_id = self.project_filter.currentData()
         total, _ = self.machine_service.get_machines_page(
-            1, 1, project_id, self.search_edit.text()
+            1, 1, project_id, self.search_edit.text(), self._selected_owner_id()
         )
         if not total:
             show_toast(self, "当前范围没有可删除的机器")
@@ -275,7 +331,9 @@ class MachinePage(QWidget):
         ):
             return
         try:
-            removed = self.machine_service.delete_all_machines(project_id, self.search_edit.text())
+            removed = self.machine_service.delete_all_machines(
+                project_id, self.search_edit.text(), self._selected_owner_id()
+            )
         except Exception as exc:
             show_toast(self, f"删除失败：{exc}", False)
             return
@@ -300,8 +358,8 @@ class MachinePage(QWidget):
 
     def collect_by_ssh(self):
         project_box = make_searchable_combo(QComboBox())
-        for project in self.project_service.get_all_projects():
-            project_box.addItem(display_project_name(project.name), project.id)
+        for project_id, project_name in self.project_service.get_project_options(self._selected_owner_id()):
+            project_box.addItem(display_project_name(project_name), project_id)
         current_project = self.project_filter.currentData()
         if current_project:
             project_box.setCurrentIndex(project_box.findData(current_project))

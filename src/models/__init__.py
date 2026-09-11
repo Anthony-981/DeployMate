@@ -5,6 +5,7 @@ from .daily_report import DailyReport
 from .expense import Expense
 from .import_file import ImportFile
 from .import_row import ImportRow
+from .user import User
 
 __all__ = [
     'Base',
@@ -16,4 +17,5 @@ __all__ = [
     'Expense',
     'ImportFile',
     'ImportRow',
+    'User',
 ]

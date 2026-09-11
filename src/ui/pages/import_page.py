@@ -26,10 +26,11 @@ from src.utils.validators import MACHINE_FIELD_LIMITS, validate_ipv4
 class ImportPage(QWidget):
     import_completed = Signal(int)
 
-    def __init__(self):
+    def __init__(self, current_user=None):
         super().__init__()
-        self.import_service = ImportService()
-        self.project_service = ProjectService()
+        self.current_user = current_user
+        self.import_service = ImportService(current_user)
+        self.project_service = ProjectService(current_user)
         self.current_rows = []
         self.current_file_path = ""
         self.pending_errors = []
@@ -214,7 +215,10 @@ class ImportPage(QWidget):
 
     def refresh_history(self):
         total, history = self.import_service.get_import_history(page=self.history_pagination.page, page_size=self.history_pagination.page_size)
-        self.history_pagination.set_total(total)
+        if self.history_pagination.set_total(total):
+            total, history = self.import_service.get_import_history(
+                page=self.history_pagination.page, page_size=self.history_pagination.page_size
+            )
         rows = [
             [item["imported_at"], item["project"], item["file_name"], item["records"],
              item["new"], item["merge"], item["conflict"], item["status"]]
@@ -269,13 +273,21 @@ class ImportPage(QWidget):
             self.current_file_path = file_path
             self.raw_rows = []
             for group in groups:
+                for preamble in group.get("preamble_rows", []):
+                    self.raw_rows.append({
+                        "工作表": group["sheet_name"],
+                        "行号": preamble.get("行号", ""),
+                        "行类型": "说明/表头",
+                        **{key: value for key, value in preamble.items() if key != "行号"},
+                    })
                 for index, raw in enumerate(group.get("source_rows", []), start=1):
                     values = dict(raw) if isinstance(raw, dict) else {
                         f"列{column + 1}": value for column, value in enumerate(raw)
                     }
                     self.raw_rows.append({
                         "工作表": group["sheet_name"],
-                        "行号": index,
+                        "行号": index + len(group.get("preamble_rows", [])),
+                        "行类型": "数据",
                         **values,
                     })
             self.refresh_raw_rows()
@@ -308,9 +320,17 @@ class ImportPage(QWidget):
             ]
             self.result_rows = result_rows
             self._render_result_table(["文件名称", "子表名称", "识别记录", "状态"])
-            preview = rows[:5] if rows else []
+            preview = [
+                raw
+                for group in groups
+                for raw in group.get("source_rows", [])
+            ][:5]
             if preview:
-                headers = sorted({key for row in preview for key in row.keys()})
+                headers = []
+                for row in preview:
+                    for key in row:
+                        if key not in headers:
+                            headers.append(key)
                 table_rows = [[row.get(h, "") for h in headers] for row in preview]
                 self.conflict_rows = table_rows or [["-"]]
                 self._render_conflict_table(headers or ["字段"])
@@ -324,8 +344,8 @@ class ImportPage(QWidget):
     def refresh_projects(self):
         selected_id = self.project_box.currentData()
         self.project_box.clear()
-        for project in self.project_service.get_all_projects():
-            self.project_box.addItem(display_project_name(project.name), project.id)
+        for project_id, project_name in self.project_service.get_project_options():
+            self.project_box.addItem(display_project_name(project_name), project_id)
         index = self.project_box.findData(selected_id)
         if index >= 0:
             self.project_box.setCurrentIndex(index)
@@ -334,6 +354,11 @@ class ImportPage(QWidget):
         self.project_box.blockSignals(True)
         self.refresh_projects()
         self.project_box.blockSignals(False)
+        for pagination in (
+            self.history_pagination, self.raw_pagination, self.repair_pagination,
+            self.result_pagination, self.conflict_pagination,
+        ):
+            pagination.reset()
         self.refresh_history()
         self._update_import_button()
 
@@ -485,7 +510,7 @@ class ImportPage(QWidget):
                 "",
             )
         ip = validate_ipv4(ip, "IP", required=True)
-        return MachineService().merge_machine_data(error["project_id"], ip, payload)
+        return MachineService(self.current_user).merge_machine_data(error["project_id"], ip, payload)
 
     def _record_repair(self, error, status):
         self.repair_history.append({

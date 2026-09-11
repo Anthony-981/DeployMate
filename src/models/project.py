@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Date, Text, DateTime
+from sqlalchemy import Column, Integer, String, Date, Text, DateTime, ForeignKey
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from .base import Base
@@ -7,6 +7,7 @@ class Project(Base):
     __tablename__ = 'projects'
     
     id = Column(Integer, primary_key=True, autoincrement=True)
+    owner_id = Column(Integer, ForeignKey("users.id", ondelete="RESTRICT"), nullable=True, index=True)
     name = Column(String(200), nullable=False)
     customer = Column(String(200))
     project_code = Column(String(100), unique=True)
@@ -24,6 +25,7 @@ class Project(Base):
     daily_reports = relationship("DailyReport", back_populates="project", cascade="all, delete-orphan")
     expenses = relationship("Expense", back_populates="project", cascade="all, delete-orphan")
     import_files = relationship("ImportFile", back_populates="project", cascade="all, delete-orphan")
+    owner = relationship("User", foreign_keys=[owner_id])
     
     def __repr__(self):
         return f"<Project(id={self.id}, name='{self.name}', status='{self.status}')>"
