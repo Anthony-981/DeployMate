@@ -2,6 +2,9 @@ from datetime import datetime
 import os
 from pathlib import Path
 import sqlite3
+import shutil
+import sys
+import tempfile
 from zipfile import ZipFile
 from PySide6.QtCore import QSettings
 from src.models import base
@@ -10,6 +13,50 @@ from src.config import resolve_db_path
 
 
 class BackupService:
+    def export_portable_package(self, target_path: str) -> str:
+        """Create a private package containing the current executable and data."""
+        if not getattr(sys, "frozen", False):
+            raise RuntimeError("请在已打包的软件中生成共享包")
+        executable = Path(sys.executable).resolve()
+        database = Path(resolve_db_path())
+        target = Path(target_path).expanduser().resolve()
+        if not executable.is_file():
+            raise FileNotFoundError(f"程序文件不存在：{executable}")
+        if not database.is_file():
+            raise FileNotFoundError(f"数据库不存在：{database}")
+        target.parent.mkdir(parents=True, exist_ok=True)
+
+        with tempfile.TemporaryDirectory(prefix="deploymate-share-") as staging:
+            staging_dir = Path(staging)
+            app_name = executable.name
+            shutil.copy2(executable, staging_dir / app_name)
+            # Use SQLite's backup API so WAL state is folded into one portable file.
+            shared_db = staging_dir / "DeployMate-data.db"
+            source_db = sqlite3.connect(database)
+            target_db = sqlite3.connect(shared_db)
+            try:
+                source_db.backup(target_db, pages=1024)
+            finally:
+                target_db.close()
+                source_db.close()
+            readme = staging_dir / "共享数据包说明.txt"
+            readme.write_text(
+                "解压后双击程序即可使用，数据库已随包加载，无需重新创建管理员。\n"
+                "此文件包含真实业务数据和账号信息，请勿上传到公开网站。\n",
+                encoding="utf-8",
+            )
+            temporary = target.with_name(f".{target.name}.tmp")
+            temporary.unlink(missing_ok=True)
+            try:
+                with ZipFile(temporary, "w") as archive:
+                    for path in staging_dir.iterdir():
+                        archive.write(path, path.name)
+                os.replace(temporary, target)
+            except Exception:
+                temporary.unlink(missing_ok=True)
+                raise
+        return str(target)
+
     def backup_now(self, backup_dir: str | None = None, file_format: str = "db") -> str:
         source = Path(resolve_db_path())
         if not source.exists():

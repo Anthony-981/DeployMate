@@ -6,7 +6,7 @@ import hashlib
 from pathlib import Path
 
 APP_NAME = "DeployMate"
-APP_VERSION = "V1.0"
+APP_VERSION = "V1.1"
 
 
 def _release_build_id() -> str:
@@ -35,11 +35,24 @@ def resolve_db_path(db_path: str | None = None, db_mode: str | None = None) -> s
     if db_path:
         return str(Path(db_path))
 
+    # A privately shared package keeps its database beside the executable so
+    # the recipient can unzip and launch it without an import/restore step.
+    portable_db = resolve_portable_db_path()
+    if portable_db is not None:
+        return str(portable_db)
+
     mode = (db_mode or get_db_mode() or "dev").strip().lower()
     data_dir = resolve_data_dir()
     data_dir.mkdir(parents=True, exist_ok=True)
     file_name = "deploymate.db" if mode == "prod" else "deploymate_dev.db"
     return str(data_dir / file_name)
+
+
+def resolve_portable_db_path() -> Path | None:
+    if not getattr(sys, "frozen", False):
+        return None
+    candidate = Path(sys.executable).resolve().parent / "DeployMate-data.db"
+    return candidate if candidate.is_file() else None
 
 
 def resolve_data_dir() -> Path:

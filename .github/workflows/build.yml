@@ -1,4 +1,4 @@
-name: DeployMate V1.0 production builds
+name: DeployMate V1.1 production builds
 
 on:
   workflow_dispatch:
@@ -17,18 +17,18 @@ jobs:
         include:
           - name: Windows x64
             os: windows-latest
-            artifact: DeployMate-V1.0-windows-x64
-            asset: DeployMate-V1.0-windows-x64.exe
+            artifact: DeployMate-V1.1-windows-x64
+            asset: DeployMate-V1.1-windows-x64.exe
             expected_arch: AMD64
           - name: macOS Intel x64
             os: macos-15-intel
-            artifact: DeployMate-V1.0-macos-intel-x64
-            asset: DeployMate-V1.0-macos-intel-x64.dmg
+            artifact: DeployMate-V1.1-macos-intel-x64
+            asset: DeployMate-V1.1-macos-intel-x64.dmg
             expected_arch: x86_64
           - name: macOS Apple Silicon ARM64
             os: macos-15
-            artifact: DeployMate-V1.0-macos-arm64
-            asset: DeployMate-V1.0-macos-arm64.dmg
+            artifact: DeployMate-V1.1-macos-arm64
+            asset: DeployMate-V1.1-macos-arm64.dmg
             expected_arch: arm64
     runs-on: ${{ matrix.os }}
     env:
@@ -128,9 +128,9 @@ jobs:
       - name: Publish release assets
         uses: softprops/action-gh-release@v2
         with:
-          name: DeployMate V1.0
+          name: DeployMate V1.1
           body: |
-            DeployMate V1.0 production release.
+            DeployMate V1.1 production release.
 
             更新内容：
 
@@ -142,7 +142,7 @@ jobs:
             - 完善首页看板、分页搜索、导入修复、项目导出、备份恢复和数据库迁移。
             - 增加账号权限、费用利润、分页、性能和回归测试。
 
-            完整说明见 `docs/RELEASE_NOTES_v1.0.md`。
+            完整说明见 `docs/RELEASE_NOTES_v1.1.md`。
 
             发布文件：
 

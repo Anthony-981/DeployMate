@@ -27,7 +27,7 @@ def test_packaged_v1_uses_versioned_empty_production_directory(tmp_path, monkeyp
 
     assert config.get_db_mode() == "prod"
     assert Path(database_path).parent.parent == tmp_path / "DeployMate"
-    assert Path(database_path).parent.name.startswith("V1.0-")
+    assert Path(database_path).parent.name.startswith("V1.1-")
     assert not (tmp_path / "DeployMate" / "deploymate.db").exists()
 
 

@@ -21,6 +21,8 @@ class SettingsPage:
         head.addWidget(restore_button)
         verify_button = make_button("校验备份")
         head.addWidget(verify_button)
+        share_button = make_button("生成共享包")
+        head.addWidget(share_button)
 
         settings = QSettings("DeployMate", "DeployMate")
 
@@ -156,8 +158,25 @@ class SettingsPage:
             valid, detail = BackupService().verify(source)
             show_toast(page, f"备份校验通过：{detail}" if valid else f"备份校验失败：{detail}", valid)
 
+        def export_shared_package():
+            default_name = "DeployMate-V1.1-共享数据包.zip"
+            target, _ = QFileDialog.getSaveFileName(
+                page, "生成共享数据包", default_name, "ZIP 压缩包 (*.zip)"
+            )
+            if not target:
+                return
+            if not target.lower().endswith(".zip"):
+                target += ".zip"
+            try:
+                package = BackupService().export_portable_package(target)
+                show_toast(page, f"共享包已生成：{package}")
+            except Exception as exc:
+                show_toast(page, f"生成共享包失败：{exc}", False)
+
         choose_dir_button.clicked.connect(choose_backup_dir)
         verify_button.clicked.connect(verify_backup)
+        share_button.clicked.connect(export_shared_package)
+        share_button.setToolTip("将当前程序和真实数据库打包给指定使用者；不要上传到公开仓库")
 
         info_panel, info_layout = make_panel("使用说明")
         info_layout.addWidget(help_label)

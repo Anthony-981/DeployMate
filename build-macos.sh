@@ -35,7 +35,7 @@ case "$(uname -m)" in
     *) echo "Unsupported macOS architecture: $(uname -m)" >&2; exit 1 ;;
 esac
 
-DMG_PATH="${DMG_PATH:-dist/DeployMate-V1.0-macos-${ARCH_NAME}.dmg}"
+DMG_PATH="${DMG_PATH:-dist/DeployMate-V1.1-macos-${ARCH_NAME}.dmg}"
 echo "[5/5] Creating ${DMG_PATH}..."
 rm -f "$DMG_PATH"
 DMG_ROOT="build/dmg-root"
