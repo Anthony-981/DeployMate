@@ -1,4 +1,4 @@
-name: DeployMate V0.3 production builds
+name: DeployMate V1.0 production builds
 
 on:
   workflow_dispatch:
@@ -17,18 +17,18 @@ jobs:
         include:
           - name: Windows x64
             os: windows-latest
-            artifact: DeployMate-V0.3-windows-x64
-            asset: DeployMate-V0.3-windows-x64.exe
+            artifact: DeployMate-V1.0-windows-x64
+            asset: DeployMate-V1.0-windows-x64.exe
             expected_arch: AMD64
           - name: macOS Intel x64
             os: macos-15-intel
-            artifact: DeployMate-V0.3-macos-intel-x64
-            asset: DeployMate-V0.3-macos-intel-x64.dmg
+            artifact: DeployMate-V1.0-macos-intel-x64
+            asset: DeployMate-V1.0-macos-intel-x64.dmg
             expected_arch: x86_64
           - name: macOS Apple Silicon ARM64
             os: macos-15
-            artifact: DeployMate-V0.3-macos-arm64
-            asset: DeployMate-V0.3-macos-arm64.dmg
+            artifact: DeployMate-V1.0-macos-arm64
+            asset: DeployMate-V1.0-macos-arm64.dmg
             expected_arch: arm64
     runs-on: ${{ matrix.os }}
     steps:
@@ -111,9 +111,11 @@ jobs:
       - name: Publish release assets
         uses: softprops/action-gh-release@v2
         with:
-          name: DeployMate V0.3
+          name: DeployMate V1.0
           body: |
-            DeployMate V0.3 production release.
+            DeployMate V1.0 production release.
+
+            See docs/RELEASE_NOTES_v1.0.md for the full update list.
 
             - Windows x64 single-file executable
             - macOS Intel x64 DMG (ad-hoc signed, not notarized)
